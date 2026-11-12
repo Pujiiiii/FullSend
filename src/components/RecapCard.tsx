@@ -1,29 +1,29 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { StatDefinition } from '../types/database';
+import { YearSummaryItem } from '../types/database';
 import { Colors, MonthNames } from '../utils/theme';
 
 interface RecapCardProps {
-  item: {
-    stat: StatDefinition;
-    yearTotal: number;
-    yearEntriesCount: number;
-    allTimeTotal: number;
-    allTimeEntriesCount: number;
-    bestMonth?: { month: number; name: string; total: number };
-    monthlyTotals: number[];
-  };
+  item: YearSummaryItem;
   year: number;
 }
 
 export const RecapCard: React.FC<RecapCardProps> = ({ item, year }) => {
-  const { stat, yearTotal, allTimeTotal, bestMonth, monthlyTotals } = item;
+  const {
+    stat,
+    yearTotal,
+    allTimeTotal,
+    bestMonth,
+    monthlyTotals,
+    subcategories,
+    topSubcategory,
+    secondaryFields,
+    routeStats,
+  } = item;
 
-  // Maximum value among the 12 months for chart scale
   const maxMonthValue = Math.max(...monthlyTotals, 1);
 
-  // Percentage of all-time total that occurred in this year
   const percentOfAllTime =
     allTimeTotal > 0 ? Math.round((yearTotal / allTimeTotal) * 100) : 100;
 
@@ -38,6 +38,7 @@ export const RecapCard: React.FC<RecapCardProps> = ({ item, year }) => {
             <Text style={styles.statType}>
               {stat.type === 'counter' && 'Total comptabilitzat'}
               {stat.type === 'numeric' && `Acumulat (${stat.unit || ''})`}
+              {stat.type === 'route' && 'Rutes GPS (km)'}
               {stat.type === 'boolean' && 'Dies completats'}
               {stat.type === 'rating' && 'Mitjana anual'}
             </Text>
@@ -77,6 +78,86 @@ export const RecapCard: React.FC<RecapCardProps> = ({ item, year }) => {
           El <Text style={{ fontWeight: 'bold', color: Colors.text }}>{percentOfAllTime}%</Text> del teu registre històric és de l'any {year}!
         </Text>
       </View>
+
+      {/* GPS Route Highlights if applicable */}
+      {routeStats && (
+        <View style={styles.routeHighlightBox}>
+          <View style={styles.routeGrid}>
+            <View style={styles.routeCol}>
+              <Text style={styles.routeVal}>{routeStats.totalDistanceKm} km</Text>
+              <Text style={styles.routeLabel}>Total recorregut</Text>
+            </View>
+            <View style={styles.routeCol}>
+              <Text style={styles.routeVal}>{Math.round(routeStats.totalDurationMinutes / 60)} h</Text>
+              <Text style={styles.routeLabel}>Temps al volant</Text>
+            </View>
+          </View>
+          <View style={[styles.routeGrid, { marginTop: 8 }]}>
+            <View style={styles.routeCol}>
+              <Text style={styles.routeVal}>{routeStats.maxSpeedKmh} km/h</Text>
+              <Text style={styles.routeLabel}>Vel. punta màxima</Text>
+            </View>
+            <View style={styles.routeCol}>
+              <Text style={styles.routeVal}>{routeStats.avgSpeedKmh} km/h</Text>
+              <Text style={styles.routeLabel}>Vel. mitjana anual</Text>
+            </View>
+          </View>
+        </View>
+      )}
+
+      {/* Secondary Numeric Fields (e.g. Fuel price & total cost) */}
+      {secondaryFields && secondaryFields.length > 0 && (
+        <View style={styles.secondaryFieldsBox}>
+          {secondaryFields.map((field) => (
+            <View key={field.fieldId} style={styles.secondaryFieldRow}>
+              <Ionicons name="pricetag" size={14} color={stat.color} />
+              <Text style={styles.secondaryFieldText}>
+                {field.label}:{' '}
+                <Text style={{ fontWeight: '800', color: Colors.text }}>
+                  {field.average} {field.unit || ''} (mitjana)
+                </Text>
+                {field.total > 0 && field.unit === '€' ? ` • Total: ${field.total} €` : ''}
+              </Text>
+            </View>
+          ))}
+        </View>
+      )}
+
+      {/* Top Subcategory Highlight & Breakdown */}
+      {subcategories && subcategories.length > 0 && (
+        <View style={styles.subcategoriesSection}>
+          {topSubcategory && (
+            <View style={styles.topSubcatBanner}>
+              <Ionicons name="ribbon" size={16} color={stat.color} />
+              <Text style={styles.topSubcatText}>
+                Preferit: <Text style={{ fontWeight: '800', color: Colors.text }}>{topSubcategory.category}</Text>{' '}
+                ({topSubcategory.percentage}% del total)
+              </Text>
+            </View>
+          )}
+
+          <View style={styles.subcatsBarsContainer}>
+            {subcategories.slice(0, 4).map((sub) => (
+              <View key={sub.category} style={styles.subcatBarRow}>
+                <View style={styles.subcatInfoRow}>
+                  <Text style={styles.subcatName}>{sub.category}</Text>
+                  <Text style={styles.subcatCount}>
+                    {sub.count} ({sub.percentage}%)
+                  </Text>
+                </View>
+                <View style={styles.subcatTrack}>
+                  <View
+                    style={[
+                      styles.subcatFill,
+                      { width: `${sub.percentage}%`, backgroundColor: stat.color },
+                    ]}
+                  />
+                </View>
+              </View>
+            ))}
+          </View>
+        </View>
+      )}
 
       {/* Best Month Highlight */}
       {bestMonth && (
@@ -214,10 +295,97 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: Colors.textSecondary,
   },
+  routeHighlightBox: {
+    backgroundColor: Colors.inputBg,
+    borderRadius: 12,
+    padding: 12,
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  routeGrid: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  routeCol: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  routeVal: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: Colors.text,
+  },
+  routeLabel: {
+    fontSize: 11,
+    color: Colors.textMuted,
+    marginTop: 2,
+  },
+  secondaryFieldsBox: {
+    marginTop: 12,
+    gap: 6,
+  },
+  secondaryFieldRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: Colors.inputBg,
+    padding: 10,
+    borderRadius: 8,
+  },
+  secondaryFieldText: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+  },
+  subcategoriesSection: {
+    marginTop: 14,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+  },
+  topSubcatBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 10,
+  },
+  topSubcatText: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+  },
+  subcatsBarsContainer: {
+    gap: 8,
+  },
+  subcatBarRow: {
+    gap: 4,
+  },
+  subcatInfoRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  subcatName: {
+    fontSize: 12,
+    color: Colors.text,
+    fontWeight: '600',
+  },
+  subcatCount: {
+    fontSize: 11,
+    color: Colors.textMuted,
+  },
+  subcatTrack: {
+    height: 6,
+    backgroundColor: Colors.surfaceLight,
+    borderRadius: 3,
+    overflow: 'hidden',
+  },
+  subcatFill: {
+    height: '100%',
+    borderRadius: 3,
+  },
   highlightRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 10,
+    marginTop: 12,
     gap: 6,
   },
   highlightText: {

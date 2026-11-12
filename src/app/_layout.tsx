@@ -43,9 +43,18 @@ export default function RootLayout() {
                 headerShown: true,
               }}
             />
+            <Stack.Screen
+              name="stat/edit/[id]"
+              options={{
+                title: 'Editar Mètrica',
+                presentation: 'modal',
+                headerShown: true,
+              }}
+            />
           </Stack>
         </StatsProvider>
       </AuthProvider>
     </SafeAreaProvider>
   );
 }
+

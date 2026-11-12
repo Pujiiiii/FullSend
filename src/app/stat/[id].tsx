@@ -3,7 +3,6 @@ import {
   View,
   Text,
   StyleSheet,
-  ScrollView,
   TouchableOpacity,
   TextInput,
   Alert,
@@ -14,6 +13,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { useStats } from '../../context/StatsContext';
 import { aggregateEntries } from '../../utils/statsCalculations';
 import { Colors } from '../../utils/theme';
+import { CustomFieldsInput } from '../../components/CustomFieldsInput';
+import { GpsRouteTrackerModal } from '../../components/GpsRouteTrackerModal';
 
 export default function StatDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -21,7 +22,9 @@ export default function StatDetailScreen() {
 
   const [newValue, setNewValue] = useState('');
   const [newNote, setNewNote] = useState('');
+  const [customFieldValues, setCustomFieldValues] = useState<Record<string, any>>({});
   const [adding, setAdding] = useState(false);
+  const [gpsModalVisible, setGpsModalVisible] = useState(false);
 
   const stat = stats.find((s) => s.id === id);
 
@@ -49,17 +52,29 @@ export default function StatDetailScreen() {
   const allTimeTotal = aggregateEntries(statEntries, stat.aggregation);
 
   const handleAddLog = async () => {
-    const val = parseFloat(newValue.replace(',', '.'));
-    if (isNaN(val)) {
-      Alert.alert('Valor invàlid', 'Introdueix un número vàlid');
-      return;
+    let val = 1;
+    if (stat.type === 'numeric' || stat.type === 'rating' || stat.type === 'route') {
+      val = parseFloat(newValue.replace(',', '.'));
+      if (isNaN(val)) {
+        Alert.alert('Valor invàlid', 'Introdueix un número vàlid');
+        return;
+      }
+    } else if (stat.type === 'counter') {
+      val = newValue ? parseFloat(newValue.replace(',', '.')) : 1;
+      if (isNaN(val)) val = 1;
     }
 
     try {
       setAdding(true);
-      await addEntry(stat.id, val, newNote || undefined);
+      await addEntry(
+        stat.id,
+        val,
+        newNote || undefined,
+        Object.keys(customFieldValues).length > 0 ? customFieldValues : undefined
+      );
       setNewValue('');
       setNewNote('');
+      setCustomFieldValues({});
     } catch (e: any) {
       Alert.alert('Error', e.message || 'No s\'ha pogut desar');
     } finally {
@@ -117,6 +132,14 @@ export default function StatDetailScreen() {
                     Tipus: {stat.type} {stat.unit ? `• Unitat: ${stat.unit}` : ''}
                   </Text>
                 </View>
+
+                <TouchableOpacity
+                  style={styles.editHeaderBtn}
+                  onPress={() => router.push(`/stat/edit/${stat.id}` as any)}
+                >
+                  <Ionicons name="pencil" size={15} color="#FFFFFF" />
+                  <Text style={styles.editHeaderBtnText}>Editar</Text>
+                </TouchableOpacity>
               </View>
 
               {/* Totals Grid */}
@@ -165,26 +188,55 @@ export default function StatDetailScreen() {
               )}
             </View>
 
-            {/* Quick manual entry form */}
+            {/* GPS Route button if route type */}
+            {stat.type === 'route' && (
+              <TouchableOpacity
+                style={[styles.recordGpsBanner, { backgroundColor: stat.color }]}
+                onPress={() => setGpsModalVisible(true)}
+              >
+                <Ionicons name="navigate-circle" size={24} color="#FFFFFF" />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.recordGpsTitle}>Gravar nova ruta amb GPS</Text>
+                  <Text style={styles.recordGpsSub}>Mesura kms, velocitat punta, mitjana i temps</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color="#FFFFFF" />
+              </TouchableOpacity>
+            )}
+
+            {/* Manual entry card */}
             <View style={styles.manualEntryCard}>
-              <Text style={styles.cardSectionTitle}>Afegir nou registre manual</Text>
-              <View style={styles.formRow}>
-                <TextInput
-                  style={styles.valInput}
-                  placeholder={`Valor (${stat.unit || 'num'})`}
-                  placeholderTextColor={Colors.textMuted}
-                  keyboardType="decimal-pad"
-                  value={newValue}
-                  onChangeText={setNewValue}
+              <Text style={styles.cardSectionTitle}>Afegir nou registre</Text>
+
+              {/* Dynamic custom fields inputs (subcategories, secondary numbers) */}
+              {stat.fields_config && stat.fields_config.length > 0 && (
+                <CustomFieldsInput
+                  fields={stat.fields_config}
+                  values={customFieldValues}
+                  onChangeValues={setCustomFieldValues}
+                  accentColor={stat.color}
                 />
+              )}
+
+              <View style={styles.formRow}>
+                {(stat.type === 'numeric' || stat.type === 'rating' || stat.type === 'route') && (
+                  <TextInput
+                    style={styles.valInput}
+                    placeholder={`Valor (${stat.unit || 'num'})`}
+                    placeholderTextColor={Colors.textMuted}
+                    keyboardType="decimal-pad"
+                    value={newValue}
+                    onChangeText={setNewValue}
+                  />
+                )}
                 <TextInput
-                  style={styles.noteInput}
+                  style={[styles.noteInput, stat.type === 'counter' && { flex: 1 }]}
                   placeholder="Nota (opcional)"
                   placeholderTextColor={Colors.textMuted}
                   value={newNote}
                   onChangeText={setNewNote}
                 />
               </View>
+
               <TouchableOpacity
                 style={[styles.addBtn, { backgroundColor: stat.color }]}
                 onPress={handleAddLog}
@@ -216,6 +268,14 @@ export default function StatDetailScreen() {
             minute: '2-digit',
           });
 
+          // Metadata badges / info
+          const subcategory = item.metadata?.subcat;
+          const pricePerLitre = item.metadata?.price_per_litre;
+          const totalCost = item.metadata?.total_cost;
+          const maxSpeed = item.metadata?.max_speed_kmh;
+          const avgSpeed = item.metadata?.avg_speed_kmh;
+          const durationSec = item.metadata?.duration_seconds;
+
           return (
             <View style={styles.logRow}>
               <View style={{ flex: 1 }}>
@@ -227,6 +287,31 @@ export default function StatDetailScreen() {
                     {dateStr} • {timeStr}
                   </Text>
                 </View>
+
+                {/* Subcategory badge */}
+                {subcategory && (
+                  <View style={styles.subcatBadge}>
+                    <Text style={styles.subcatBadgeText}>🏷️ {subcategory}</Text>
+                  </View>
+                )}
+
+                {/* Fuel secondary data */}
+                {(pricePerLitre !== undefined || totalCost !== undefined) && (
+                  <Text style={styles.extraMetadataText}>
+                    ⛽ {pricePerLitre ? `${pricePerLitre} €/L` : ''}
+                    {pricePerLitre && totalCost ? ' • ' : ''}
+                    {totalCost ? `Cost: ${totalCost} €` : ''}
+                  </Text>
+                )}
+
+                {/* Route GPS secondary data */}
+                {maxSpeed !== undefined && (
+                  <Text style={styles.extraMetadataText}>
+                    🚗 Vel. punta: {maxSpeed} km/h • Mitja: {avgSpeed} km/h
+                    {durationSec ? ` • Temps: ${Math.round(durationSec / 60)} min` : ''}
+                  </Text>
+                )}
+
                 {item.note ? <Text style={styles.logNote}>{item.note}</Text> : null}
               </View>
 
@@ -265,6 +350,22 @@ export default function StatDetailScreen() {
           </View>
         }
         contentContainerStyle={styles.contentList}
+      />
+
+      {/* GPS Route Tracker Modal */}
+      <GpsRouteTrackerModal
+        visible={gpsModalVisible}
+        onClose={() => setGpsModalVisible(false)}
+        statName={stat.name}
+        themeColor={stat.color}
+        onFinishRoute={(route) => {
+          addEntry(
+            stat.id,
+            route.distance_km,
+            `Trajecte de ${route.distance_km} km`,
+            route
+          );
+        }}
       />
     </View>
   );
@@ -312,6 +413,20 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 14,
+  },
+  editHeaderBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.primary,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 8,
+    gap: 4,
+  },
+  editHeaderBtnText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 12,
   },
   iconCircle: {
     width: 50,
@@ -395,6 +510,24 @@ const styles = StyleSheet.create({
     height: '100%',
     borderRadius: 3,
   },
+  recordGpsBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 14,
+    borderRadius: 14,
+    gap: 12,
+    marginBottom: 16,
+  },
+  recordGpsTitle: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+    fontSize: 15,
+  },
+  recordGpsSub: {
+    color: 'rgba(255,255,255,0.85)',
+    fontSize: 11,
+    marginTop: 1,
+  },
   manualEntryCard: {
     backgroundColor: Colors.surface,
     borderRadius: 14,
@@ -413,6 +546,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 8,
     marginBottom: 10,
+    marginTop: 4,
   },
   valInput: {
     flex: 1,
@@ -440,6 +574,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     paddingVertical: 12,
     alignItems: 'center',
+    marginTop: 4,
   },
   addBtnText: {
     color: '#FFFFFF',
@@ -477,9 +612,28 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: Colors.textMuted,
   },
-  logNote: {
+  subcatBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(99, 102, 241, 0.15)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    marginTop: 6,
+  },
+  subcatBadgeText: {
+    fontSize: 11,
+    color: Colors.primaryLight,
+    fontWeight: '700',
+  },
+  extraMetadataText: {
     fontSize: 12,
     color: Colors.textSecondary,
+    marginTop: 4,
+    fontWeight: '500',
+  },
+  logNote: {
+    fontSize: 12,
+    color: Colors.textMuted,
     marginTop: 4,
   },
   deleteEntryBtn: {

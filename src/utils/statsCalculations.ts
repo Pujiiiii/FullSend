@@ -1,4 +1,12 @@
-import { StatDefinition, StatEntry, YearSummary } from '../types/database';
+import {
+  StatDefinition,
+  StatEntry,
+  YearSummary,
+  YearSummaryItem,
+  SubcategoryStat,
+  SecondaryFieldStat,
+  RouteStatsSummary,
+} from '../types/database';
 import { MonthNames } from './theme';
 
 export function aggregateEntries(
@@ -38,7 +46,7 @@ export function calculateYearSummary(
 ): YearSummary {
   const yearEntries = filterEntriesByYear(allEntries, year);
 
-  const statsSummaries = stats.map((stat) => {
+  const statsSummaries: YearSummaryItem[] = stats.map((stat) => {
     const statEntriesAllTime = allEntries.filter((e) => e.stat_id === stat.id);
     const statEntriesThisYear = yearEntries.filter((e) => e.stat_id === stat.id);
 
@@ -85,6 +93,92 @@ export function calculateYearSummary(
           }
         : undefined;
 
+    // Subcategories breakdown (from custom 'select' fields)
+    let subcategories: SubcategoryStat[] | undefined = undefined;
+    let topSubcategory: SubcategoryStat | undefined = undefined;
+
+    const selectField = stat.fields_config?.find((f) => f.type === 'select');
+    if (selectField) {
+      const catCounts: { [cat: string]: { count: number; totalValue: number } } = {};
+      let totalAssigned = 0;
+
+      statEntriesThisYear.forEach((entry) => {
+        const catVal = entry.metadata?.[selectField.id];
+        if (catVal) {
+          if (!catCounts[catVal]) {
+            catCounts[catVal] = { count: 0, totalValue: 0 };
+          }
+          catCounts[catVal].count += 1;
+          catCounts[catVal].totalValue += entry.value;
+          totalAssigned += 1;
+        }
+      });
+
+      if (totalAssigned > 0) {
+        subcategories = Object.entries(catCounts).map(([category, data]) => ({
+          category,
+          count: data.count,
+          percentage: Math.round((data.count / totalAssigned) * 100),
+          totalValue: Number(data.totalValue.toFixed(1)),
+        })).sort((a, b) => b.count - a.count);
+
+        topSubcategory = subcategories[0];
+      }
+    }
+
+    // Secondary Numeric Fields Analysis (e.g. price per litre, total € cost)
+    let secondaryFields: SecondaryFieldStat[] | undefined = undefined;
+    const numericFields = stat.fields_config?.filter((f) => f.type === 'number');
+    if (numericFields && numericFields.length > 0) {
+      secondaryFields = numericFields.map((field) => {
+        let sum = 0;
+        let count = 0;
+        statEntriesThisYear.forEach((entry) => {
+          const val = entry.metadata?.[field.id];
+          if (typeof val === 'number') {
+            sum += val;
+            count += 1;
+          }
+        });
+        const average = count > 0 ? Number((sum / count).toFixed(2)) : 0;
+        return {
+          fieldId: field.id,
+          label: field.label,
+          unit: field.unit,
+          total: Number(sum.toFixed(2)),
+          average,
+        };
+      }).filter((f) => f.total > 0 || f.average > 0);
+    }
+
+    // Route Stats Summary (for route stats)
+    let routeStats: RouteStatsSummary | undefined = undefined;
+    if (stat.type === 'route') {
+      let totalDist = 0;
+      let totalDurationSec = 0;
+      let maxSpeed = 0;
+
+      statEntriesThisYear.forEach((entry) => {
+        const dist = entry.metadata?.distance_km ?? entry.value;
+        const dur = entry.metadata?.duration_seconds ?? 0;
+        const spd = entry.metadata?.max_speed_kmh ?? 0;
+
+        totalDist += dist;
+        totalDurationSec += dur;
+        if (spd > maxSpeed) maxSpeed = spd;
+      });
+
+      const totalHours = totalDurationSec / 3600;
+      const overallAvgSpeed = totalHours > 0 ? Number((totalDist / totalHours).toFixed(1)) : 0;
+
+      routeStats = {
+        totalDistanceKm: Number(totalDist.toFixed(1)),
+        totalDurationMinutes: Math.round(totalDurationSec / 60),
+        maxSpeedKmh: maxSpeed,
+        avgSpeedKmh: overallAvgSpeed,
+      };
+    }
+
     return {
       stat,
       yearTotal,
@@ -93,6 +187,10 @@ export function calculateYearSummary(
       allTimeEntriesCount: statEntriesAllTime.length,
       bestMonth,
       monthlyTotals,
+      subcategories,
+      topSubcategory,
+      secondaryFields,
+      routeStats,
     };
   });
 

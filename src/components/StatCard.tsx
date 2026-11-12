@@ -4,18 +4,34 @@ import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { StatWithStats } from '../types/database';
 import { Colors } from '../utils/theme';
+import { CustomFieldsInput } from './CustomFieldsInput';
+import { GpsRouteTrackerModal } from './GpsRouteTrackerModal';
 
 interface StatCardProps {
   stat: StatWithStats;
-  onQuickLog: (value: number, note?: string) => void;
+  onQuickLog: (value: number, note?: string, metadata?: Record<string, any>) => void;
 }
 
 export const StatCard: React.FC<StatCardProps> = ({ stat, onQuickLog }) => {
   const [isInputOpen, setIsInputOpen] = useState(false);
   const [inputValue, setInputValue] = useState('');
   const [inputNote, setInputNote] = useState('');
+  const [customFieldValues, setCustomFieldValues] = useState<Record<string, any>>({});
+  const [gpsModalVisible, setGpsModalVisible] = useState(false);
+
+  const hasCustomFields = stat.fields_config && stat.fields_config.length > 0;
 
   const handleQuickAdd = () => {
+    if (stat.type === 'route') {
+      setGpsModalVisible(true);
+      return;
+    }
+
+    if (hasCustomFields) {
+      setIsInputOpen(!isInputOpen);
+      return;
+    }
+
     if (stat.type === 'counter') {
       onQuickLog(1);
     } else if (stat.type === 'boolean') {
@@ -26,18 +42,25 @@ export const StatCard: React.FC<StatCardProps> = ({ stat, onQuickLog }) => {
   };
 
   const handleCustomSubmit = () => {
-    const val = parseFloat(inputValue.replace(',', '.'));
-    if (isNaN(val)) {
-      Alert.alert('Valor invàlid', 'Introdueix un número vàlid');
-      return;
+    let val = 1;
+    if (stat.type === 'numeric' || stat.type === 'rating') {
+      val = parseFloat(inputValue.replace(',', '.'));
+      if (isNaN(val)) {
+        Alert.alert('Valor invàlid', 'Introdueix un número vàlid');
+        return;
+      }
+    } else if (stat.type === 'counter') {
+      val = inputValue ? parseFloat(inputValue.replace(',', '.')) : 1;
+      if (isNaN(val)) val = 1;
     }
-    onQuickLog(val, inputNote || undefined);
+
+    onQuickLog(val, inputNote || undefined, Object.keys(customFieldValues).length > 0 ? customFieldValues : undefined);
     setInputValue('');
     setInputNote('');
+    setCustomFieldValues({});
     setIsInputOpen(false);
   };
 
-  // Target progress percentage (if target exists)
   const progressPercent = stat.target_value
     ? Math.min(100, Math.round((stat.currentYearTotal / stat.target_value) * 100))
     : null;
@@ -62,6 +85,8 @@ export const StatCard: React.FC<StatCardProps> = ({ stat, onQuickLog }) => {
             {stat.type === 'numeric' && `Mesura (${stat.unit || ''})`}
             {stat.type === 'boolean' && 'Hàbit diari'}
             {stat.type === 'rating' && 'Puntuació mitjana'}
+            {stat.type === 'route' && 'Ruta amb GPS (km)'}
+            {hasCustomFields && ' • Camps extres'}
           </Text>
         </View>
 
@@ -74,7 +99,7 @@ export const StatCard: React.FC<StatCardProps> = ({ stat, onQuickLog }) => {
         </View>
       </TouchableOpacity>
 
-      {/* Progress Bar if target exists */}
+      {/* Target progress */}
       {stat.target_value && progressPercent !== null && (
         <View style={styles.progressSection}>
           <View style={styles.progressBarTrack}>
@@ -91,16 +116,25 @@ export const StatCard: React.FC<StatCardProps> = ({ stat, onQuickLog }) => {
         </View>
       )}
 
-      {/* Quick Action Button or Custom Input */}
+      {/* Action Row */}
       <View style={styles.actionRow}>
         <View style={styles.allTimeInfo}>
           <Text style={styles.allTimeText}>
-            Històric: <Text style={{ color: Colors.text, fontWeight: 'bold' }}>{stat.allTimeTotal}</Text>
+            Històric: <Text style={{ color: Colors.text, fontWeight: 'bold' }}>{stat.allTimeTotal} {stat.unit || ''}</Text>
           </Text>
         </View>
 
         <View style={styles.actionsGroup}>
-          {stat.type === 'numeric' || stat.type === 'rating' ? (
+          {stat.type === 'route' ? (
+            <TouchableOpacity
+              activeOpacity={0.8}
+              onPress={() => setGpsModalVisible(true)}
+              style={[styles.quickAddBtn, { backgroundColor: stat.color }]}
+            >
+              <Ionicons name="navigate" size={16} color="#FFFFFF" />
+              <Text style={styles.quickAddBtnText}>Gravar ruta</Text>
+            </TouchableOpacity>
+          ) : stat.type === 'numeric' || stat.type === 'rating' || hasCustomFields ? (
             <TouchableOpacity
               onPress={() => setIsInputOpen(!isInputOpen)}
               style={[styles.smallBtn, { borderColor: stat.color }]}
@@ -141,19 +175,29 @@ export const StatCard: React.FC<StatCardProps> = ({ stat, onQuickLog }) => {
         </View>
       </View>
 
-      {/* Expanded Custom Input for numeric / rating or notes */}
+      {/* Expanded Custom Input */}
       {isInputOpen && (
         <View style={styles.inputDropdown}>
-          <View style={styles.inputsRow}>
-            <TextInput
-              style={styles.numericInput}
-              placeholder={stat.type === 'rating' ? 'Puntuació (1-5)' : `Valor (${stat.unit || 'num'})`}
-              placeholderTextColor={Colors.textMuted}
-              keyboardType="decimal-pad"
-              value={inputValue}
-              onChangeText={setInputValue}
-              autoFocus
+          {hasCustomFields && (
+            <CustomFieldsInput
+              fields={stat.fields_config || []}
+              values={customFieldValues}
+              onChangeValues={setCustomFieldValues}
+              accentColor={stat.color}
             />
+          )}
+
+          <View style={styles.inputsRow}>
+            {(stat.type === 'numeric' || stat.type === 'rating') && (
+              <TextInput
+                style={styles.numericInput}
+                placeholder={stat.type === 'rating' ? 'Puntuació (1-5)' : `Valor (${stat.unit || 'num'})`}
+                placeholderTextColor={Colors.textMuted}
+                keyboardType="decimal-pad"
+                value={inputValue}
+                onChangeText={setInputValue}
+              />
+            )}
             <TextInput
               style={styles.noteInput}
               placeholder="Nota opcional..."
@@ -162,6 +206,7 @@ export const StatCard: React.FC<StatCardProps> = ({ stat, onQuickLog }) => {
               onChangeText={setInputNote}
             />
           </View>
+
           <TouchableOpacity
             style={[styles.submitButton, { backgroundColor: stat.color }]}
             onPress={handleCustomSubmit}
@@ -170,6 +215,21 @@ export const StatCard: React.FC<StatCardProps> = ({ stat, onQuickLog }) => {
           </TouchableOpacity>
         </View>
       )}
+
+      {/* GPS Route Tracker Modal */}
+      <GpsRouteTrackerModal
+        visible={gpsModalVisible}
+        onClose={() => setGpsModalVisible(false)}
+        statName={stat.name}
+        themeColor={stat.color}
+        onFinishRoute={(route) => {
+          onQuickLog(
+            route.distance_km,
+            `Trajecte de ${route.distance_km} km (${Math.round(route.duration_seconds / 60)} min)`,
+            route
+          );
+        }}
+      />
     </View>
   );
 };
@@ -275,6 +335,7 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
     paddingHorizontal: 14,
     borderRadius: 8,
+    gap: 4,
   },
   alreadyDoneBtn: {
     opacity: 0.7,
@@ -283,7 +344,6 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontWeight: '700',
     fontSize: 13,
-    marginLeft: 4,
   },
   smallBtn: {
     flexDirection: 'row',
@@ -307,6 +367,7 @@ const styles = StyleSheet.create({
   inputsRow: {
     flexDirection: 'row',
     gap: 8,
+    marginTop: 6,
     marginBottom: 8,
   },
   numericInput: {

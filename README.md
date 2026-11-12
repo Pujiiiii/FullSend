@@ -56,3 +56,4 @@ Quan vulguis sincronitzar al núvol:
 * `npx expo start`: Iniciar el servidor de desenvolupament
 * `npx tsc --noEmit`: Comprovació de tipus TypeScript
 * `npx expo-doctor`: Diagnosi de salut del projecte Expo
+

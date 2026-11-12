@@ -67,7 +67,7 @@ export default function HomeScreen() {
         renderItem={({ item }) => (
           <StatCard
             stat={item}
-            onQuickLog={(value, note) => addEntry(item.id, value, note)}
+            onQuickLog={(value, note, metadata) => addEntry(item.id, value, note, metadata)}
           />
         )}
         contentContainerStyle={styles.listContent}
@@ -192,3 +192,4 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
 });
+

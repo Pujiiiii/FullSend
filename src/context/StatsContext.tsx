@@ -16,13 +16,19 @@ interface StatsContextType {
   addStat: (newStat: Omit<StatDefinition, 'id' | 'user_id' | 'created_at' | 'updated_at'>) => Promise<StatDefinition>;
   updateStat: (id: string, updates: Partial<StatDefinition>) => Promise<void>;
   deleteStat: (id: string) => Promise<void>;
-  addEntry: (statId: string, value: number, note?: string, customDate?: Date) => Promise<void>;
+  addEntry: (
+    statId: string,
+    value: number,
+    note?: string,
+    metadata?: Record<string, any>,
+    customDate?: Date
+  ) => Promise<void>;
   deleteEntry: (id: string) => Promise<void>;
   resetDemoData: () => Promise<void>;
 }
 
-const LOCAL_STATS_KEY = '@statstracker_stats';
-const LOCAL_ENTRIES_KEY = '@statstracker_entries';
+const LOCAL_STATS_KEY = '@statstracker_stats_v2';
+const LOCAL_ENTRIES_KEY = '@statstracker_entries_v2';
 
 const StatsContext = createContext<StatsContextType>({} as StatsContextType);
 
@@ -167,8 +173,14 @@ export const StatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   };
 
-  // Add an entry (Quick log / custom input)
-  const addEntry = async (statId: string, value: number, note?: string, customDate?: Date) => {
+  // Add an entry (Quick log / custom input / route)
+  const addEntry = async (
+    statId: string,
+    value: number,
+    note?: string,
+    metadata?: Record<string, any>,
+    customDate?: Date
+  ) => {
     const recordedAt = customDate ? customDate.toISOString() : new Date().toISOString();
     const createdAt = new Date().toISOString();
 
@@ -179,6 +191,7 @@ export const StatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         user_id: 'local-user',
         value,
         note: note || null,
+        metadata: metadata || {},
         recorded_at: recordedAt,
         created_at: createdAt,
       };
@@ -193,6 +206,7 @@ export const StatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           user_id: user.id,
           value,
           note: note || null,
+          metadata: metadata || {},
           recorded_at: recordedAt,
         })
         .select()
@@ -225,7 +239,6 @@ export const StatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setEntries(demoEntries);
   };
 
-  // Precomputed stats with current year and all-time totals
   const currentYear = new Date().getFullYear();
   const todayDateString = new Date().toISOString().split('T')[0];
 

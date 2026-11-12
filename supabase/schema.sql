@@ -11,26 +11,34 @@ create table if not exists public.stat_definitions (
     description text,
     icon text default '📊',
     color text default '#6366F1',
-    type text not null check (type in ('counter', 'numeric', 'boolean', 'rating')),
-    unit text,                          -- p.ex: "km", "h", "€", "pàgines" (per al tipus 'numeric')
+    type text not null check (type in ('counter', 'numeric', 'boolean', 'rating', 'route')),
+    unit text,                          -- p.ex: "km", "h", "€", "L", "llibres"
     target_value numeric,               -- objectiu opcional (p.ex: 100)
     target_period text check (target_period in ('daily', 'weekly', 'monthly', 'yearly', null)),
     aggregation text default 'sum' check (aggregation in ('sum', 'count', 'avg', 'max', 'min')),
+    fields_config jsonb default '[]'::jsonb, -- Configuració de camps extres (subcategories, preu, etc.)
     is_archived boolean default false,
     created_at timestamp with time zone default timezone('utc'::text, now()) not null,
     updated_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
--- 3. Taula de registres d'activitat (cada vegada que s'afegeix un valor o comptador)
+-- 3. Taula de registres d'activitat (cada vegada que s'afegeix un valor, comptador o ruta)
 create table if not exists public.stat_entries (
     id uuid default gen_random_uuid() primary key,
     stat_id uuid references public.stat_definitions(id) on delete cascade not null,
     user_id uuid references auth.users(id) on delete cascade not null,
     value numeric not null,
     note text,
+    metadata jsonb default '{}'::jsonb, -- Valors dels camps extres: { subcategory, price, litres, speed, duration, etc. }
     recorded_at timestamp with time zone default timezone('utc'::text, now()) not null,
     created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
+
+-- MIGRACIÓ PER A TAULES EXISTENTS (Si ja havies executat la versió anterior)
+alter table if exists public.stat_definitions add column if not exists fields_config jsonb default '[]'::jsonb;
+alter table if exists public.stat_entries add column if not exists metadata jsonb default '{}'::jsonb;
+alter table if exists public.stat_definitions drop constraint if exists stat_definitions_type_check;
+alter table if exists public.stat_definitions add constraint stat_definitions_type_check check (type in ('counter', 'numeric', 'boolean', 'rating', 'route'));
 
 -- 4. Índexs per a màxim rendiment en consultes i resums anuals
 create index if not exists idx_stat_definitions_user on public.stat_definitions(user_id);
