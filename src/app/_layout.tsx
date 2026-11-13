@@ -5,6 +5,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AuthProvider } from '../context/AuthContext';
 import { StatsProvider } from '../context/StatsContext';
 import { Colors } from '../utils/theme';
+import '../utils/gpsTracker';
 
 export default function RootLayout() {
   return (

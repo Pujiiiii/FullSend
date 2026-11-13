@@ -6,10 +6,16 @@ import {
   Modal,
   TouchableOpacity,
   Alert,
+  Switch,
 } from 'react-native';
-import * as Location from 'expo-location';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '../utils/theme';
+import {
+  startGpsTracking,
+  stopGpsTracking,
+  checkActiveRouteOnStartup,
+  RouteTrackingState,
+} from '../utils/gpsTracker';
 
 interface GpsRouteTrackerModalProps {
   visible: boolean;
@@ -24,26 +30,6 @@ interface GpsRouteTrackerModalProps {
   themeColor?: string;
 }
 
-// Distance calculation between two GPS coordinates (Haversine formula in km)
-function calculateDistanceKm(
-  lat1: number,
-  lon1: number,
-  lat2: number,
-  lon2: number
-): number {
-  const R = 6371; // Earth radius in km
-  const dLat = ((lat2 - lat1) * Math.PI) / 180;
-  const dLon = ((lon2 - lon1) * Math.PI) / 180;
-  const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos((lat1 * Math.PI) / 180) *
-      Math.cos((lat2 * Math.PI) / 180) *
-      Math.sin(dLon / 2) *
-      Math.sin(dLon / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return R * c;
-}
-
 export const GpsRouteTrackerModal: React.FC<GpsRouteTrackerModalProps> = ({
   visible,
   onClose,
@@ -56,106 +42,93 @@ export const GpsRouteTrackerModal: React.FC<GpsRouteTrackerModalProps> = ({
   const [currentSpeedKmh, setCurrentSpeedKmh] = useState(0);
   const [maxSpeedKmh, setMaxSpeedKmh] = useState(0);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [keepScreenAwake, setKeepScreenAwake] = useState(true);
 
-  const prevLocationRef = useRef<Location.LocationObjectCoords | null>(null);
-  const locationSubscriptionRef = useRef<Location.LocationSubscription | null>(null);
+  const startTimeRef = useRef<number | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Stop tracking on unmount or close
+  // Sync state when modal becomes visible
   useEffect(() => {
-    return () => {
-      stopTracking();
-    };
-  }, []);
+    if (visible) {
+      checkActiveRouteOnStartup().then((existing) => {
+        if (existing && existing.isTracking) {
+          setIsTracking(true);
+          setDistanceKm(existing.distanceKm);
+          setMaxSpeedKmh(existing.maxSpeedKmh);
+          startTimeRef.current = existing.startTime;
+          startUiTimer(existing.startTime);
+        }
+      });
+    }
+  }, [visible]);
 
-  const startTracking = async () => {
-    const { status } = await Location.requestForegroundPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert(
-        'Permís denegat',
-        'Necessitem accés al GPS per poder mesurar la distància i velocitat de la ruta.'
-      );
+  const startUiTimer = (startMs: number | null) => {
+    if (timerRef.current) clearInterval(timerRef.current);
+    if (!startMs) return;
+
+    timerRef.current = setInterval(() => {
+      const now = Date.now();
+      const realElapsed = Math.max(0, Math.floor((now - startMs) / 1000));
+      setElapsedSeconds(realElapsed);
+    }, 1000);
+  };
+
+  const handleStart = async () => {
+    const res = await startGpsTracking((state: RouteTrackingState) => {
+      setDistanceKm(state.distanceKm);
+      setCurrentSpeedKmh(state.currentSpeedKmh);
+      setMaxSpeedKmh(state.maxSpeedKmh);
+    }, keepScreenAwake);
+
+    if (!res.success) {
+      Alert.alert('Error GPS', res.error || 'No s\'ha pogut activar el GPS.');
       return;
     }
 
-    // Reset stats
+    const now = Date.now();
+    startTimeRef.current = now;
+    setIsTracking(true);
     setDistanceKm(0);
     setCurrentSpeedKmh(0);
     setMaxSpeedKmh(0);
     setElapsedSeconds(0);
-    prevLocationRef.current = null;
-    setIsTracking(true);
-
-    // Timer
-    timerRef.current = setInterval(() => {
-      setElapsedSeconds((prev) => prev + 1);
-    }, 1000);
-
-    // Start GPS watch
-    try {
-      const sub = await Location.watchPositionAsync(
-        {
-          accuracy: Location.Accuracy.High,
-          timeInterval: 1000,
-          distanceInterval: 3, // Update every 3 meters
-        },
-        (loc) => {
-          const coords = loc.coords;
-          // Speed: m/s -> km/h
-          const speedKmh = Math.max(0, Math.round((coords.speed || 0) * 3.6));
-          setCurrentSpeedKmh(speedKmh);
-          setMaxSpeedKmh((prev) => Math.max(prev, speedKmh));
-
-          if (prevLocationRef.current) {
-            const dist = calculateDistanceKm(
-              prevLocationRef.current.latitude,
-              prevLocationRef.current.longitude,
-              coords.latitude,
-              coords.longitude
-            );
-            // Ignore GPS jitter when stationary
-            if (dist > 0.003) {
-              setDistanceKm((prev) => Number((prev + dist).toFixed(2)));
-            }
-          }
-          prevLocationRef.current = coords;
-        }
-      );
-      locationSubscriptionRef.current = sub;
-    } catch (err: any) {
-      Alert.alert('Error GPS', err.message || 'No s\'ha pogut iniciar el GPS');
-      stopTracking();
-    }
+    startUiTimer(now);
   };
 
-  const stopTracking = () => {
-    if (locationSubscriptionRef.current) {
-      locationSubscriptionRef.current.remove();
-      locationSubscriptionRef.current = null;
-    }
+  const handleFinish = async () => {
     if (timerRef.current) {
       clearInterval(timerRef.current);
       timerRef.current = null;
     }
+
+    const result = await stopGpsTracking();
     setIsTracking(false);
-  };
+    startTimeRef.current = null;
 
-  const handleFinish = () => {
-    stopTracking();
-
-    const hours = elapsedSeconds / 3600;
-    const avgSpeed = hours > 0 && distanceKm > 0 ? Number((distanceKm / hours).toFixed(1)) : 0;
-
-    onFinishRoute({
-      distance_km: distanceKm,
-      duration_seconds: elapsedSeconds,
-      max_speed_kmh: maxSpeedKmh,
-      avg_speed_kmh: avgSpeed,
-    });
+    onFinishRoute(result);
     onClose();
   };
 
-  // Format MM:SS or HH:MM:SS
+  const handleCancel = async () => {
+    Alert.alert('Cancel·lar ruta?', 'La ruta en curs es descartarà i no es desarà.', [
+      { text: 'Continuar gravant', style: 'cancel' },
+      {
+        text: 'Descartar',
+        style: 'destructive',
+        onPress: async () => {
+          if (timerRef.current) {
+            clearInterval(timerRef.current);
+            timerRef.current = null;
+          }
+          await stopGpsTracking();
+          setIsTracking(false);
+          startTimeRef.current = null;
+          onClose();
+        },
+      },
+    ]);
+  };
+
   const formatTime = (totalSec: number) => {
     const hrs = Math.floor(totalSec / 3600);
     const mins = Math.floor((totalSec % 3600) / 60);
@@ -166,6 +139,7 @@ export const GpsRouteTrackerModal: React.FC<GpsRouteTrackerModalProps> = ({
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
+  // Real-world average speed calculation
   const hours = elapsedSeconds / 3600;
   const currentAvgSpeed = hours > 0 && distanceKm > 0 ? (distanceKm / hours).toFixed(1) : '0';
 
@@ -179,25 +153,7 @@ export const GpsRouteTrackerModal: React.FC<GpsRouteTrackerModalProps> = ({
               <Ionicons name="navigate-circle" size={24} color={themeColor} />
               <Text style={styles.headerTitle}>{statName}</Text>
             </View>
-            <TouchableOpacity
-              onPress={() => {
-                if (isTracking) {
-                  Alert.alert('Cancel·lar ruta?', 'La ruta en curs es descartarà.', [
-                    { text: 'Continuar', style: 'cancel' },
-                    {
-                      text: 'Descartar',
-                      style: 'destructive',
-                      onPress: () => {
-                        stopTracking();
-                        onClose();
-                      },
-                    },
-                  ]);
-                } else {
-                  onClose();
-                }
-              }}
-            >
+            <TouchableOpacity onPress={isTracking ? handleCancel : onClose}>
               <Ionicons name="close-circle" size={26} color={Colors.textMuted} />
             </TouchableOpacity>
           </View>
@@ -208,7 +164,9 @@ export const GpsRouteTrackerModal: React.FC<GpsRouteTrackerModalProps> = ({
               {currentSpeedKmh}
             </Text>
             <Text style={styles.speedUnit}>KM/H</Text>
-            <Text style={styles.speedLabel}>Velocitat actual</Text>
+            <Text style={styles.speedLabel}>
+              {isTracking ? 'Velocitat actual' : 'A punt per començar'}
+            </Text>
           </View>
 
           {/* Metrics Grid */}
@@ -222,7 +180,7 @@ export const GpsRouteTrackerModal: React.FC<GpsRouteTrackerModalProps> = ({
 
             <View style={styles.metricItem}>
               <Text style={styles.metricVal}>{formatTime(elapsedSeconds)}</Text>
-              <Text style={styles.metricLabel}>Temps</Text>
+              <Text style={styles.metricLabel}>Temps real</Text>
             </View>
           </View>
 
@@ -240,12 +198,24 @@ export const GpsRouteTrackerModal: React.FC<GpsRouteTrackerModalProps> = ({
             </View>
           </View>
 
+          {/* Keep screen awake toggle */}
+          <View style={styles.awakeRow}>
+            <Ionicons name="sunny-outline" size={18} color={Colors.textSecondary} />
+            <Text style={styles.awakeText}>Mantenir pantalla encesa</Text>
+            <Switch
+              value={keepScreenAwake}
+              onValueChange={setKeepScreenAwake}
+              trackColor={{ false: Colors.surfaceLight, true: themeColor }}
+              thumbColor="#FFFFFF"
+            />
+          </View>
+
           {/* Controls */}
           <View style={styles.actionsContainer}>
             {!isTracking ? (
               <TouchableOpacity
                 style={[styles.startBtn, { backgroundColor: themeColor }]}
-                onPress={startTracking}
+                onPress={handleStart}
               >
                 <Ionicons name="play" size={22} color="#FFFFFF" />
                 <Text style={styles.startBtnText}>Començar trajecte</Text>
@@ -349,8 +319,22 @@ const styles = StyleSheet.create({
     height: 30,
     backgroundColor: Colors.border,
   },
+  awakeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 14,
+    paddingHorizontal: 4,
+  },
+  awakeText: {
+    flex: 1,
+    fontSize: 13,
+    color: Colors.textSecondary,
+    marginLeft: 8,
+    fontWeight: '500',
+  },
   actionsContainer: {
-    marginTop: 20,
+    marginTop: 16,
   },
   startBtn: {
     flexDirection: 'row',
@@ -380,4 +364,3 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
 });
-
