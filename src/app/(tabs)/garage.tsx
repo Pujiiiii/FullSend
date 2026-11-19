@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -6,32 +6,34 @@ import {
   FlatList,
   TouchableOpacity,
   RefreshControl,
-  Alert,
 } from 'react-native';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useStats } from '../../context/StatsContext';
 import { Colors } from '../../utils/theme';
+import { CustomAlertModal, CustomAlertOptions } from '../../components/CustomAlertModal';
 
 export default function GarageScreen() {
   const { statsWithCurrentStats, refreshing, refreshData, deleteStat } = useStats();
+  const [alertConfig, setAlertConfig] = useState<CustomAlertOptions>({
+    visible: false,
+    title: '',
+    message: '',
+  });
 
   // Filter only vehicles / sports activities (type 'route')
   const vehicles = statsWithCurrentStats.filter((s) => s.type === 'route' && !s.is_archived);
 
   const handleDeleteVehicle = (vehicle: typeof vehicles[0]) => {
-    Alert.alert(
-      'Eliminar vehicle?',
-      `S'eliminarà "${vehicle.name}" i tot el seu historial de trajectes. Aquesta acció no es pot desfer.`,
-      [
-        { text: 'Cancel·lar', style: 'cancel' },
-        {
-          text: 'Eliminar',
-          style: 'destructive',
-          onPress: () => deleteStat(vehicle.id),
-        },
-      ]
-    );
+    setAlertConfig({
+      visible: true,
+      title: 'Eliminar màquina?',
+      message: `S'eliminarà "${vehicle.name}" i tot el seu historial de rutes i telemetria. Aquesta acció no es pot desfer.`,
+      type: 'destructive',
+      primaryText: 'Eliminar',
+      secondaryText: 'Cancel·lar',
+      onPrimary: () => deleteStat(vehicle.id),
+    });
   };
 
   return (
@@ -155,6 +157,11 @@ export default function GarageScreen() {
             </TouchableOpacity>
           );
         }}
+      />
+
+      <CustomAlertModal
+        config={alertConfig}
+        onClose={() => setAlertConfig((prev) => ({ ...prev, visible: false }))}
       />
     </View>
   );

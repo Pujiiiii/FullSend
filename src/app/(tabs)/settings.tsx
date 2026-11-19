@@ -6,13 +6,13 @@ import {
   ScrollView,
   TouchableOpacity,
   TextInput,
-  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../context/AuthContext';
 import { useStats } from '../../context/StatsContext';
 import { isSupabaseConfigured } from '../../lib/supabase';
 import { Colors } from '../../utils/theme';
+import { CustomAlertModal, CustomAlertOptions } from '../../components/CustomAlertModal';
 
 export default function SettingsScreen() {
   const { user, signIn, signUp, signOut } = useAuth();
@@ -22,12 +22,25 @@ export default function SettingsScreen() {
   const [password, setPassword] = useState('');
   const [isRegistering, setIsRegistering] = useState(false);
   const [authLoading, setAuthLoading] = useState(false);
+  const [alertConfig, setAlertConfig] = useState<CustomAlertOptions>({
+    visible: false,
+    title: '',
+    message: '',
+  });
+
+  const showAlert = (options: Omit<CustomAlertOptions, 'visible'>) => {
+    setAlertConfig({ ...options, visible: true });
+  };
 
   const supabaseReady = isSupabaseConfigured();
 
   const handleAuth = async () => {
     if (!email || !password) {
-      Alert.alert('Camps incomplets', 'Omple el correu i la contrasenya');
+      showAlert({
+        title: 'Camps incomplets',
+        message: 'Si us plau, omple tant el teu correu com la contrasenya per continuar.',
+        type: 'warning',
+      });
       return;
     }
     setAuthLoading(true);
@@ -35,29 +48,41 @@ export default function SettingsScreen() {
     setAuthLoading(false);
 
     if (result.error) {
-      Alert.alert('Error d\'autenticació', result.error.message);
+      showAlert({
+        title: "Error d'autenticació",
+        message: result.error.message,
+        type: 'error',
+      });
     } else {
-      Alert.alert('Èxit', isRegistering ? 'Compte creat! Comprova el correu si cal confirmar.' : 'Sessió iniciada!');
-      refreshData();
+      showAlert({
+        title: isRegistering ? 'Compte creat! ⚡' : 'Sessió iniciada! 🏁',
+        message: isRegistering
+          ? 'El teu compte s\'ha creat amb èxit. Si cal confirmació, revisa la teva bústia de correu.'
+          : 'Benvingut de nou a Full Send! Les teves rutes i telemetria es sincronitzaran automàticament.',
+        type: 'success',
+        onPrimary: () => {
+          refreshData();
+        },
+      });
     }
   };
 
   const handleResetData = () => {
-    Alert.alert(
-      'Restablir dades?',
-      'Això recarregarà les dades de demostració inicials (cafès, running, llibres, meditació...).',
-      [
-        { text: 'Cancel·lar', style: 'cancel' },
-        {
-          text: 'Restablir',
-          style: 'destructive',
-          onPress: async () => {
-            await resetDemoData();
-            Alert.alert('Dades restablertes', 'S\'han carregat les dades de demostració.');
-          },
-        },
-      ]
-    );
+    showAlert({
+      title: 'Restablir dades?',
+      message: 'Es recarregaran els vehicles d\'exemple i rutes de demostració de Full Send (cotxe, moto, esquí, 4x4).',
+      type: 'destructive',
+      primaryText: 'Restablir',
+      secondaryText: 'Cancel·lar',
+      onPrimary: async () => {
+        await resetDemoData();
+        showAlert({
+          title: 'Dades restablertes',
+          message: 'S\'han carregat correctament les dades de demostració.',
+          type: 'success',
+        });
+      },
+    });
   };
 
   return (
@@ -188,6 +213,12 @@ export default function SettingsScreen() {
         <Text style={styles.appTagline}>TRACK EVERYTHING. DRIVE. RIDE. SKI. EXPLORE.</Text>
         <Text style={styles.appSub}>Versió 2.0.0 • High Energy Telemetry</Text>
       </View>
+
+      {/* Full Send Glassmorphic Alert Modal */}
+      <CustomAlertModal
+        config={alertConfig}
+        onClose={() => setAlertConfig((prev) => ({ ...prev, visible: false }))}
+      />
     </ScrollView>
   );
 }

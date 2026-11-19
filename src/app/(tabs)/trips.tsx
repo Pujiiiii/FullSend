@@ -6,18 +6,23 @@ import {
   FlatList,
   TouchableOpacity,
   RefreshControl,
-  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useStats } from '../../context/StatsContext';
 import { Colors } from '../../utils/theme';
 import { RouteMapModal } from '../../components/RouteMapModal';
+import { CustomAlertModal, CustomAlertOptions } from '../../components/CustomAlertModal';
 import { StatEntry } from '../../types/database';
 
 export default function TripsFeedScreen() {
   const { stats, entries, deleteEntry, refreshing, refreshData } = useStats();
   const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(null);
   const [selectedRouteModalEntry, setSelectedRouteModalEntry] = useState<StatEntry | null>(null);
+  const [alertConfig, setAlertConfig] = useState<CustomAlertOptions>({
+    visible: false,
+    title: '',
+    message: '',
+  });
 
   // All vehicles with route type
   const vehicles = stats.filter((s) => s.type === 'route');
@@ -33,18 +38,15 @@ export default function TripsFeedScreen() {
     .sort((a, b) => new Date(b.recorded_at).getTime() - new Date(a.recorded_at).getTime());
 
   const handleDeleteTrip = (entry: StatEntry) => {
-    Alert.alert(
-      'Eliminar trajecte?',
-      `Esborraràs aquesta sessió de ${entry.value} km. No es podrà recuperar.`,
-      [
-        { text: 'Cancel·lar', style: 'cancel' },
-        {
-          text: 'Eliminar',
-          style: 'destructive',
-          onPress: () => deleteEntry(entry.id),
-        },
-      ]
-    );
+    setAlertConfig({
+      visible: true,
+      title: 'Eliminar trajecte?',
+      message: `Esborraràs aquesta sessió de ${entry.value} km. No es podrà recuperar.`,
+      type: 'destructive',
+      primaryText: 'Eliminar',
+      secondaryText: 'Cancel·lar',
+      onPrimary: () => deleteEntry(entry.id),
+    });
   };
 
   const formatDuration = (sec?: number) => {
@@ -251,6 +253,12 @@ export default function TripsFeedScreen() {
           distanceKm={selectedRouteModalEntry.value}
         />
       )}
+
+      {/* Full Send Alert Modal */}
+      <CustomAlertModal
+        config={alertConfig}
+        onClose={() => setAlertConfig((prev) => ({ ...prev, visible: false }))}
+      />
     </View>
   );
 }

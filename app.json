@@ -24,7 +24,14 @@
         "ACCESS_BACKGROUND_LOCATION",
         "FOREGROUND_SERVICE",
         "FOREGROUND_SERVICE_LOCATION",
-        "WAKE_LOCK"
+        "WAKE_LOCK",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_BACKGROUND_LOCATION",
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_LOCATION",
+        "android.permission.POST_NOTIFICATIONS"
       ]
     },
     "web": {
@@ -50,8 +57,9 @@
         }
       },
       "eas": {
-        "projectId": "ea3b453a-f3b9-4a4b-b695-57526f6121dc"
+        "projectId": "1c2c94c8-d869-4bda-b549-c5b935230492"
       }
-    }
+    },
+    "owner": "puji26"
   }
 }

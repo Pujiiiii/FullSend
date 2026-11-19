@@ -1,10 +1,9 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
-  Alert,
   Modal,
   Platform,
 } from 'react-native';
@@ -19,6 +18,7 @@ import {
   checkActiveRouteOnStartup,
   RouteTrackingState,
 } from '../../utils/gpsTracker';
+import { CustomAlertModal, CustomAlertOptions } from '../../components/CustomAlertModal';
 
 export default function FullSendLiveScreen() {
   const { stats, addEntry } = useStats();
@@ -38,18 +38,33 @@ export default function FullSendLiveScreen() {
   const [elapsedSec, setElapsedSec] = useState(0);
   const [elevationGainM, setElevationGainM] = useState(0);
   const [currentAltM, setCurrentAltM] = useState<number | null>(null);
-  const [mapTheme, setMapTheme] = useState<'dark_road' | 'snow_mountain' | 'satellite'>('dark_road');
+  const [mapTheme, setMapTheme] = useState<'dark_road' | 'snow_mountain' | 'satellite' | 'streets'>('dark_road');
   const [is3D, setIs3D] = useState(true);
   const [vehicleModalVisible, setVehicleModalVisible] = useState(false);
 
+  // Custom Alert Modal State
+  const [alertConfig, setAlertConfig] = useState<CustomAlertOptions>({
+    visible: false,
+    title: '',
+    message: '',
+  });
+
+  const showAlert = (options: Omit<CustomAlertOptions, 'visible'>) => {
+    setAlertConfig({ ...options, visible: true });
+  };
+
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const mapReadyRef = useRef<boolean>(false);
+  const lastCoordsRef = useRef<Location.LocationObjectCoords | null>(null);
 
   const sendLocationToMap = (
     coords: Location.LocationObjectCoords,
     recording: boolean,
     vehicleIcon?: string
   ) => {
-    if (!webViewRef.current) return;
+    lastCoordsRef.current = coords;
+    if (!webViewRef.current || !mapReadyRef.current) return;
+
     const msg = JSON.stringify({
       type: 'LOCATION_UPDATE',
       lng: coords.longitude,
@@ -77,27 +92,47 @@ export default function FullSendLiveScreen() {
 
     (async () => {
       const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') return;
+      if (status !== 'granted') {
+        showAlert({
+          title: 'Permís de localització necessari',
+          message: 'Full Send necessita el permís de GPS per mostrar el mapa en 3D i registrar la teva telemetria.',
+          type: 'warning',
+        });
+        return;
+      }
 
-      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-      sendLocationToMap(loc.coords, false);
+      try {
+        const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        lastCoordsRef.current = loc.coords;
+        if (loc.coords.altitude !== null) {
+          setCurrentAltM(Math.round(loc.coords.altitude));
+        }
+        sendLocationToMap(loc.coords, false);
+      } catch (e) {
+        console.warn('Initial location error:', e);
+      }
 
       // Watch live location for idle player avatar movement
-      sub = await Location.watchPositionAsync(
-        {
-          accuracy: Location.Accuracy.High,
-          timeInterval: 2000,
-          distanceInterval: 3,
-        },
-        (update) => {
-          if (!isRecording) {
-            sendLocationToMap(update.coords, false);
+      try {
+        sub = await Location.watchPositionAsync(
+          {
+            accuracy: Location.Accuracy.High,
+            timeInterval: 2000,
+            distanceInterval: 2,
+          },
+          (update) => {
+            lastCoordsRef.current = update.coords;
             if (update.coords.altitude !== null) {
               setCurrentAltM(Math.round(update.coords.altitude));
             }
+            if (!isRecording) {
+              sendLocationToMap(update.coords, false);
+            }
           }
-        }
-      );
+        );
+      } catch (e) {
+        console.warn('Watch location error:', e);
+      }
     })();
 
     // Check if a background route was already active
@@ -120,11 +155,11 @@ export default function FullSendLiveScreen() {
 
   const handleStartSendIt = async () => {
     if (!selectedVehicle) {
-      Alert.alert(
-        'Cap vehicle actiu',
-        'Afegeix un vehicle al teu Garatge abans de començar.',
-        [{ text: 'D\'acord' }]
-      );
+      showAlert({
+        title: 'Cap vehicle actiu',
+        message: 'Afegeix o selecciona una màquina al teu Garatge abans de prémer SEND IT ⚡.',
+        type: 'warning',
+      });
       return;
     }
 
@@ -140,17 +175,20 @@ export default function FullSendLiveScreen() {
         setCurrentAltM(state.currentAltitudeM);
         setElevationGainM(state.elevationGainM);
 
-        // Forward to map in real time
         Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High }).then((loc) => {
           sendLocationToMap(loc.coords, true, selectedVehicle.icon);
-        });
+        }).catch(() => { });
       },
       themeToUse,
       true
     );
 
     if (!res.success) {
-      Alert.alert('Error GPS', res.error || 'No s\'ha pogut connectar amb el GPS.');
+      showAlert({
+        title: 'Error GPS',
+        message: res.error || 'No s\'ha pogut connectar amb el GPS.',
+        type: 'error',
+      });
       return;
     }
 
@@ -166,47 +204,44 @@ export default function FullSendLiveScreen() {
     // Switch avatar to active vehicle on map
     Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High }).then((loc) => {
       sendLocationToMap(loc.coords, true, selectedVehicle.icon);
-    });
+    }).catch(() => { });
   };
 
   const handleStopSendIt = async () => {
-    Alert.alert(
-      '🏁 Finalitzar sessió?',
-      `Has recorregut ${distanceKm} km amb velocitat punta de ${maxSpeedKmh} km/h. Vols desar aquest trajecte?`,
-      [
-        { text: 'Continuar gravant', style: 'cancel' },
-        {
-          text: 'Finalitzar i desar',
-          style: 'default',
-          onPress: async () => {
-            if (timerRef.current) clearInterval(timerRef.current);
-            const routeResult = await stopGpsTracking();
+    showAlert({
+      title: 'Finalitzar sessió? 🏁',
+      message: `Has recorregut ${distanceKm} km amb una velocitat punta de ${maxSpeedKmh} km/h. Vols desar aquest trajecte?`,
+      type: 'info',
+      primaryText: 'Desar trajecte',
+      secondaryText: 'Continuar gravant',
+      onPrimary: async () => {
+        if (timerRef.current) clearInterval(timerRef.current);
+        const routeResult = await stopGpsTracking();
 
-            setIsRecording(false);
-            setSpeedKmh(0);
+        setIsRecording(false);
+        setSpeedKmh(0);
 
-            if (selectedVehicle) {
-              await addEntry(
-                selectedVehicle.id,
-                routeResult.distance_km,
-                `Sessió Full Send amb ${selectedVehicle.name}`,
-                routeResult
-              );
-            }
+        if (selectedVehicle) {
+          await addEntry(
+            selectedVehicle.id,
+            routeResult.distance_km,
+            `Sessió Full Send amb ${selectedVehicle.name}`,
+            routeResult
+          );
+        }
 
-            Alert.alert(
-              '⚡ Full Send Completat!',
-              `Trajecte de ${routeResult.distance_km} km desat al teu historial.`
-            );
+        showAlert({
+          title: 'Full Send Completat! ⚡',
+          message: `Trajecte de ${routeResult.distance_km} km desat correctament al teu historial.`,
+          type: 'success',
+        });
 
-            // Revert avatar to person
-            Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }).then((loc) => {
-              sendLocationToMap(loc.coords, false);
-            });
-          },
-        },
-      ]
-    );
+        // Revert avatar to person
+        Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }).then((loc) => {
+          sendLocationToMap(loc.coords, false);
+        }).catch(() => { });
+      },
+    });
   };
 
   const cycleTheme = () => {
@@ -214,8 +249,10 @@ export default function FullSendLiveScreen() {
       mapTheme === 'dark_road'
         ? 'snow_mountain'
         : mapTheme === 'snow_mountain'
-        ? 'satellite'
-        : 'dark_road';
+          ? 'satellite'
+          : mapTheme === 'satellite'
+            ? 'streets'
+            : 'dark_road';
     setMapTheme(next);
     webViewRef.current?.postMessage(
       JSON.stringify({ type: 'SET_THEME', themeKey: next })
@@ -231,9 +268,24 @@ export default function FullSendLiveScreen() {
   };
 
   const recenter = () => {
+    if (lastCoordsRef.current) {
+      sendLocationToMap(lastCoordsRef.current, isRecording);
+    }
     webViewRef.current?.postMessage(
       JSON.stringify({ type: 'RECENTER' })
     );
+  };
+
+  const handleWebViewMessage = (event: any) => {
+    try {
+      const data = JSON.parse(event.nativeEvent.data);
+      if (data.type === 'MAP_LOADED') {
+        mapReadyRef.current = true;
+        if (lastCoordsRef.current) {
+          sendLocationToMap(lastCoordsRef.current, isRecording);
+        }
+      }
+    } catch { }
   };
 
   const formatTime = (totalSec: number) => {
@@ -244,16 +296,16 @@ export default function FullSendLiveScreen() {
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
-  // Full Send MapLibre 3D Terrain HTML
-  const generateLiveMapHtml = () => {
-    return `
+  // Static HTML template (Memoized to prevent WebView from ever reloading on state change)
+  const mapHtmlSource = useMemo(() => {
+    const html = `
 <!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
-  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@3.6.2/dist/maplibre-gl.css" />
+  <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body {
@@ -263,6 +315,7 @@ export default function FullSendLiveScreen() {
       overflow: hidden;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       user-select: none;
+      -webkit-user-select: none;
     }
     #map {
       width: 100%;
@@ -271,7 +324,7 @@ export default function FullSendLiveScreen() {
       top: 0;
       left: 0;
     }
-    /* Avatar Styling: Persona en repòs, Vehicle en moviment */
+    /* Pokémon GO Style Avatar */
     .avatar-wrapper {
       position: relative;
       width: 44px;
@@ -279,9 +332,10 @@ export default function FullSendLiveScreen() {
       display: flex;
       align-items: center;
       justify-content: center;
-      transition: transform 0.3s ease-out;
+      pointer-events: none;
     }
     .avatar-bubble {
+      position: relative;
       width: 40px;
       height: 40px;
       border-radius: 50%;
@@ -290,10 +344,11 @@ export default function FullSendLiveScreen() {
       display: flex;
       align-items: center;
       justify-content: center;
-      box-shadow: 0 4px 16px rgba(0,0,0,0.8);
-      font-size: 20px;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.85);
+      font-size: 22px;
+      z-index: 2;
     }
-    .avatar-direction-pointer {
+    .avatar-pointer {
       position: absolute;
       top: -6px;
       width: 0;
@@ -301,6 +356,7 @@ export default function FullSendLiveScreen() {
       border-left: 6px solid transparent;
       border-right: 6px solid transparent;
       border-bottom: 9px solid #CCFF00;
+      z-index: 3;
     }
     .maplibregl-ctrl-bottom-left, .maplibregl-ctrl-bottom-right {
       display: none !important;
@@ -320,9 +376,10 @@ export default function FullSendLiveScreen() {
     var followMode = true;
 
     var themeLayers = {
-      dark_road: ['layer-dark-base', 'layer-dark-ref'],
-      snow_mountain: ['layer-snow', 'layer-dark-ref'],
-      satellite: ['layer-satellite']
+      dark_road: ['layer-osm-dark', 'layer-dark-ref'],
+      snow_mountain: ['layer-topo', 'layer-dark-ref'],
+      satellite: ['layer-satellite'],
+      streets: ['layer-osm-streets']
     };
 
     function initMap() {
@@ -331,7 +388,7 @@ export default function FullSendLiveScreen() {
         style: {
           version: 8,
           sources: {
-            // Free AWS Terrarium Elevation DEM for true 3D mountains
+            // Free AWS Terrarium Elevation DEM for 3D Mountain Mesh
             'terrainSource': {
               type: 'raster-dem',
               tiles: ['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'],
@@ -339,75 +396,85 @@ export default function FullSendLiveScreen() {
               tileSize: 256,
               maxzoom: 15
             },
-            'source-dark-base': {
+            // OpenStreetMap full road & street network (Always visible everywhere)
+            'source-osm': {
               type: 'raster',
-              tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}'],
+              tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
               tileSize: 256,
-              maxzoom: 18
+              maxzoom: 19
             },
-            'source-dark-ref': {
-              type: 'raster',
-              tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}'],
-              tileSize: 256,
-              maxzoom: 18
-            },
-            'source-snow': {
+            // Esri World Topo Map (Great for ski & elevation contours)
+            'source-topo': {
               type: 'raster',
               tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}'],
               tileSize: 256,
               maxzoom: 18
             },
+            // Esri Satellite Aerial Imagery
             'source-satellite': {
               type: 'raster',
               tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
               tileSize: 256,
               maxzoom: 19
+            },
+            // Road labels & place names overlay
+            'source-dark-ref': {
+              type: 'raster',
+              tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}'],
+              tileSize: 256,
+              maxzoom: 18
             }
           },
           layers: [
+            // Dark Road Theme (OSM with night contrast)
             {
-              id: 'layer-dark-base',
+              id: 'layer-osm-dark',
               type: 'raster',
-              source: 'source-dark-base',
-              layout: { visibility: 'visible' }
+              source: 'source-osm',
+              layout: { visibility: 'visible' },
+              paint: {
+                'raster-saturation': -0.75,
+                'raster-contrast': 0.35,
+                'raster-brightness-max': 0.8
+              }
             },
+            // Vibrant Streets Theme
             {
-              id: 'layer-snow',
+              id: 'layer-osm-streets',
               type: 'raster',
-              source: 'source-snow',
+              source: 'source-osm',
+              layout: { visibility: 'none' }
+            },
+            // Alpine Snow / Topo Theme
+            {
+              id: 'layer-topo',
+              type: 'raster',
+              source: 'source-topo',
               layout: { visibility: 'none' },
               paint: {
-                'raster-saturation': -0.7,
+                'raster-saturation': -0.65,
                 'raster-contrast': 0.25,
                 'raster-brightness-max': 1.15
               }
             },
+            // Satellite Aerial Theme
             {
               id: 'layer-satellite',
               type: 'raster',
               source: 'source-satellite',
               layout: { visibility: 'none' }
             },
+            // Road Labels Overlay
             {
               id: 'layer-dark-ref',
               type: 'raster',
               source: 'source-dark-ref',
               layout: { visibility: 'visible' }
             }
-          ],
-          terrain: {
-            source: 'terrainSource',
-            exaggeration: 1.55
-          },
-          sky: {
-            'sky-color': '#090D16',
-            'sky-horizon-blend': 0.5,
-            'horizon-color': '#0F172A',
-            'fog-color': '#090D16'
-          }
+          ]
         },
-        center: [1.5, 42.0],
-        zoom: 14,
+        center: [2.1734, 41.3851], // Initial center (Barcelona/Catalonia), immediately flies to user
+        zoom: 15.5,
         pitch: 58,
         bearing: 0,
         maxPitch: 85
@@ -421,7 +488,12 @@ export default function FullSendLiveScreen() {
       });
 
       map.on('load', function() {
-        // Source for live recorded route trail
+        // Enable 3D Terrain
+        try {
+          map.setTerrain({ source: 'terrainSource', exaggeration: 1.55 });
+        } catch(e) {}
+
+        // Live recorded trail source
         map.addSource('live-trail-source', {
           type: 'geojson',
           data: {
@@ -440,7 +512,7 @@ export default function FullSendLiveScreen() {
           paint: {
             'line-color': '#CCFF00',
             'line-width': 9,
-            'line-opacity': 0.45,
+            'line-opacity': 0.5,
             'line-blur': 3
           }
         });
@@ -456,14 +528,19 @@ export default function FullSendLiveScreen() {
           }
         });
 
-        createAvatarMarker([1.5, 42.0]);
+        createAvatarMarker([2.1734, 41.3851]);
+
+        // Handshake: notify React Native that the map is ready
+        if (window.ReactNativeWebView) {
+          window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'MAP_LOADED' }));
+        }
       });
     }
 
     function createAvatarMarker(lngLat) {
       avatarEl = document.createElement('div');
       avatarEl.className = 'avatar-wrapper';
-      avatarEl.innerHTML = '<div class="avatar-direction-pointer"></div><div class="avatar-bubble"><span id="avatarIcon">🧍</span></div>';
+      avatarEl.innerHTML = '<div class="avatar-pointer"></div><div class="avatar-bubble"><span id="avatarIcon">🧍</span></div>';
 
       playerMarker = new maplibregl.Marker({ element: avatarEl })
         .setLngLat(lngLat)
@@ -480,9 +557,9 @@ export default function FullSendLiveScreen() {
         playerMarker.setLngLat(lngLat);
       }
 
-      // Rotate avatar icon according to GPS heading
+      // Rotate avatar according to GPS heading
       if (avatarEl && data.heading !== undefined) {
-        avatarEl.style.transform = 'rotate(' + data.heading + 'deg)';
+        avatarEl.style.transform = 'rotate(' + (data.heading || 0) + 'deg)';
       }
 
       // Change avatar: Person when idle, Vehicle when recording
@@ -491,7 +568,7 @@ export default function FullSendLiveScreen() {
         iconEl.innerText = data.isRecording ? (data.vehicleIcon || '🏎️') : '🧍';
       }
 
-      // If recording, add to live glowing trail
+      // Live glowing trail while recording
       if (data.isRecording) {
         liveTrailCoords.push(lngLat);
         var src = map.getSource('live-trail-source');
@@ -512,13 +589,13 @@ export default function FullSendLiveScreen() {
         }
       }
 
-      // Camera follow player in 3D perspective
+      // Pokémon GO camera follow
       if (followMode) {
         map.easeTo({
           center: lngLat,
           pitch: is3D ? 58 : 0,
-          bearing: data.heading || map.getBearing(),
-          duration: 1000
+          zoom: 15.5,
+          duration: 900
         });
       }
     }
@@ -529,14 +606,14 @@ export default function FullSendLiveScreen() {
         map.easeTo({
           center: playerMarker.getLngLat(),
           pitch: is3D ? 58 : 0,
-          zoom: 15.5,
-          duration: 800
+          zoom: 16,
+          duration: 700
         });
       }
     }
 
     function applyTheme(themeKey) {
-      var all = ['layer-dark-base', 'layer-snow', 'layer-satellite', 'layer-dark-ref'];
+      var all = ['layer-osm-dark', 'layer-osm-streets', 'layer-topo', 'layer-satellite', 'layer-dark-ref'];
       all.forEach(function(l) {
         if (map.getLayer(l)) map.setLayoutProperty(l, 'visibility', 'none');
       });
@@ -549,17 +626,23 @@ export default function FullSendLiveScreen() {
     function toggle3D(val) {
       is3D = val;
       if (is3D) {
-        map.setTerrain({ source: 'terrainSource', exaggeration: 1.55 });
-        map.easeTo({ pitch: 58, duration: 800 });
+        try {
+          map.setTerrain({ source: 'terrainSource', exaggeration: 1.55 });
+        } catch(e) {}
+        map.easeTo({ pitch: 58, duration: 700 });
       } else {
-        map.setTerrain(null);
-        map.easeTo({ pitch: 0, bearing: 0, duration: 800 });
+        try {
+          map.setTerrain(null);
+        } catch(e) {}
+        map.easeTo({ pitch: 0, bearing: 0, duration: 700 });
       }
     }
 
-    window.addEventListener('message', function(event) {
+    function handleIncomingMessage(event) {
+      var raw = event.data;
+      if (!raw) return;
       try {
-        var data = JSON.parse(event.data);
+        var data = typeof raw === 'string' ? JSON.parse(raw) : raw;
         if (data.type === 'LOCATION_UPDATE') {
           updatePlayer(data);
         } else if (data.type === 'SET_THEME') {
@@ -570,14 +653,19 @@ export default function FullSendLiveScreen() {
           recenterOnPlayer();
         }
       } catch(e) {}
-    });
+    }
+
+    // Support both window and document message dispatching on Android
+    window.addEventListener('message', handleIncomingMessage);
+    document.addEventListener('message', handleIncomingMessage);
 
     window.onload = initMap;
   </script>
 </body>
 </html>
     `;
-  };
+    return { html };
+  }, []);
 
   return (
     <View style={styles.container}>
@@ -585,11 +673,15 @@ export default function FullSendLiveScreen() {
       <WebView
         ref={webViewRef}
         originWhitelist={['*']}
-        source={{ html: generateLiveMapHtml() }}
+        source={mapHtmlSource}
         style={styles.webView}
         javaScriptEnabled={true}
         domStorageEnabled={true}
+        allowsInlineMediaPlayback={true}
+        mixedContentMode="always"
+        androidHardwareAccelerationDisabled={false}
         scrollEnabled={false}
+        onMessage={handleWebViewMessage}
       />
 
       {/* Top Floating Bar: Vehicle Selector & HUD Controls */}
@@ -615,64 +707,75 @@ export default function FullSendLiveScreen() {
         <View style={styles.topActionsRow}>
           <TouchableOpacity style={styles.hudCircleBtn} onPress={cycleTheme}>
             <Ionicons
-              name={mapTheme === 'snow_mountain' ? 'snow' : mapTheme === 'satellite' ? 'globe' : 'moon'}
+              name={
+                mapTheme === 'snow_mountain'
+                  ? 'snow'
+                  : mapTheme === 'satellite'
+                    ? 'globe'
+                    : mapTheme === 'streets'
+                      ? 'map'
+                      : 'moon'
+              }
               size={18}
               color="#FFFFFF"
             />
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.hudCircleBtn} onPress={toggle3DMode}>
-            <Text style={styles.hudTextIcon}>{is3D ? '3D' : '2D'}</Text>
+          <TouchableOpacity
+            style={[styles.hudCircleBtn, is3D && styles.hudBtnActive]}
+            onPress={toggle3DMode}
+          >
+            <Text style={[styles.hudTextIcon, is3D && { color: '#090D16' }]}>3D</Text>
           </TouchableOpacity>
 
           <TouchableOpacity style={styles.hudCircleBtn} onPress={recenter}>
-            <Ionicons name="navigate" size={18} color={Colors.primary} />
+            <Ionicons name="locate" size={18} color={Colors.primary} />
           </TouchableOpacity>
         </View>
       </View>
 
-      {/* Live Telemetry Speedometer HUD (When moving or recording) */}
-      {(isRecording || speedKmh > 5) && (
-        <View style={styles.telemetryOverlay}>
-          <View style={styles.speedBox}>
-            <Text style={styles.speedNumber}>{speedKmh}</Text>
-            <Text style={styles.speedLabel}>KM/H</Text>
-          </View>
-
-          {isRecording && (
-            <View style={styles.statsStrip}>
-              <View style={styles.statCol}>
-                <Text style={styles.statVal}>{distanceKm} km</Text>
-                <Text style={styles.statSub}>Distància</Text>
-              </View>
-              <View style={styles.statDivider} />
-              <View style={styles.statCol}>
-                <Text style={styles.statVal}>{formatTime(elapsedSec)}</Text>
-                <Text style={styles.statSub}>Temps</Text>
-              </View>
-              <View style={styles.statDivider} />
-              <View style={styles.statCol}>
-                <Text style={styles.statVal}>{maxSpeedKmh} km/h</Text>
-                <Text style={styles.statSub}>Punta</Text>
-              </View>
-              <View style={styles.statDivider} />
-              <View style={styles.statCol}>
-                <Text style={[styles.statVal, { color: '#38BDF8' }]}>
-                  {currentAltM !== null ? `${currentAltM}m` : '--'}
-                </Text>
-                <Text style={styles.statSub}>Cota</Text>
-              </View>
-              <View style={styles.statDivider} />
-              <View style={styles.statCol}>
-                <Text style={[styles.statVal, { color: '#10B981' }]}>
-                  +{elevationGainM} m
-                </Text>
-                <Text style={styles.statSub}>+D</Text>
-              </View>
-            </View>
-          )}
+      {/* Telemetry Cockpit Overlay */}
+      <View style={styles.telemetryOverlay}>
+        {/* Live Speedometer */}
+        <View style={styles.speedBox}>
+          <Text style={styles.speedNumber}>{speedKmh}</Text>
+          <Text style={styles.speedLabel}>KM/H</Text>
         </View>
-      )}
+
+        {/* Live Stats Bar while recording */}
+        {isRecording && (
+          <View style={styles.statsStrip}>
+            <View style={styles.statCol}>
+              <Text style={styles.statVal}>{distanceKm} km</Text>
+              <Text style={styles.statSub}>Distància</Text>
+            </View>
+            <View style={styles.statDivider} />
+            <View style={styles.statCol}>
+              <Text style={styles.statVal}>{formatTime(elapsedSec)}</Text>
+              <Text style={styles.statSub}>Temps</Text>
+            </View>
+            <View style={styles.statDivider} />
+            <View style={styles.statCol}>
+              <Text style={styles.statVal}>{maxSpeedKmh} km/h</Text>
+              <Text style={styles.statSub}>Punta</Text>
+            </View>
+            <View style={styles.statDivider} />
+            <View style={styles.statCol}>
+              <Text style={[styles.statVal, { color: '#38BDF8' }]}>
+                {currentAltM !== null ? `${currentAltM}m` : '--'}
+              </Text>
+              <Text style={styles.statSub}>Cota</Text>
+            </View>
+            <View style={styles.statDivider} />
+            <View style={styles.statCol}>
+              <Text style={[styles.statVal, { color: '#10B981' }]}>
+                +{elevationGainM} m
+              </Text>
+              <Text style={styles.statSub}>+D</Text>
+            </View>
+          </View>
+        )}
+      </View>
 
       {/* Prominent Floating "SEND IT ⚡" / "STOP" Button */}
       <View style={styles.sendItContainer}>
@@ -691,20 +794,29 @@ export default function FullSendLiveScreen() {
             activeOpacity={0.85}
             onPress={handleStopSendIt}
           >
-            <Ionicons name="stop" size={24} color="#FFFFFF" />
+            <Ionicons name="stop-circle" size={24} color="#FFFFFF" />
             <Text style={styles.stopText}>FINALITZAR 🏁</Text>
           </TouchableOpacity>
         )}
       </View>
 
-      {/* Vehicle Selection Modal */}
-      <Modal visible={vehicleModalVisible} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
+      {/* Vehicle / Machine Picker Modal */}
+      <Modal
+        visible={vehicleModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setVehicleModalVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setVehicleModalVisible(false)}
+        >
           <View style={styles.modalSheet}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Tria la teva Màquina</Text>
               <TouchableOpacity onPress={() => setVehicleModalVisible(false)}>
-                <Ionicons name="close-circle" size={26} color={Colors.textMuted} />
+                <Ionicons name="close" size={24} color={Colors.text} />
               </TouchableOpacity>
             </View>
 
@@ -733,8 +845,14 @@ export default function FullSendLiveScreen() {
               </TouchableOpacity>
             ))}
           </View>
-        </View>
+        </TouchableOpacity>
       </Modal>
+
+      {/* Full Send Glassmorphic Alert Modal */}
+      <CustomAlertModal
+        config={alertConfig}
+        onClose={() => setAlertConfig((prev) => ({ ...prev, visible: false }))}
+      />
     </View>
   );
 }
@@ -806,6 +924,10 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     elevation: 6,
   },
+  hudBtnActive: {
+    backgroundColor: Colors.primary,
+    borderColor: Colors.primary,
+  },
   hudTextIcon: {
     color: '#FFFFFF',
     fontWeight: '900',
@@ -849,15 +971,16 @@ const styles = StyleSheet.create({
   },
   statsStrip: {
     flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(15, 23, 42, 0.92)',
+    backgroundColor: 'rgba(15, 23, 42, 0.94)',
     borderRadius: 16,
-    marginTop: 10,
-    paddingVertical: 8,
+    paddingVertical: 10,
     paddingHorizontal: 14,
-    gap: 12,
+    marginTop: 12,
+    alignItems: 'center',
+    justifyContent: 'space-around',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.12)',
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+    width: '100%',
   },
   statCol: {
     alignItems: 'center',
@@ -870,16 +993,17 @@ const styles = StyleSheet.create({
   statSub: {
     fontSize: 9,
     color: Colors.textMuted,
+    marginTop: 2,
     textTransform: 'uppercase',
   },
   statDivider: {
     width: 1,
-    height: 18,
-    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    height: 22,
+    backgroundColor: 'rgba(255, 255, 255, 0.12)',
   },
   sendItContainer: {
     position: 'absolute',
-    bottom: 96, // Sits comfortably above floating bottom tab bar
+    bottom: 96, // Positioned right above the floating bottom dock
     left: 20,
     right: 20,
     alignItems: 'center',
@@ -892,16 +1016,14 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.primary,
     paddingVertical: 16,
     paddingHorizontal: 36,
-    borderRadius: 32,
+    borderRadius: 28,
     gap: 10,
     shadowColor: Colors.primary,
     shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.6,
+    shadowOpacity: 0.45,
     shadowRadius: 16,
     elevation: 10,
-    borderWidth: 2,
-    borderColor: '#E2F952',
-    minWidth: '70%',
+    width: '80%',
   },
   sendItText: {
     color: '#090D16',
@@ -916,14 +1038,14 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.danger,
     paddingVertical: 16,
     paddingHorizontal: 36,
-    borderRadius: 32,
+    borderRadius: 28,
     gap: 10,
     shadowColor: Colors.danger,
     shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.6,
+    shadowOpacity: 0.45,
     shadowRadius: 16,
     elevation: 10,
-    minWidth: '70%',
+    width: '80%',
   },
   stopText: {
     color: '#FFFFFF',
