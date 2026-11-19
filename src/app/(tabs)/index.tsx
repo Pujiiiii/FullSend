@@ -95,7 +95,7 @@ export default function FullSendLiveScreen() {
       if (status !== 'granted') {
         showAlert({
           title: 'Permís de localització necessari',
-          message: 'Full Send necessita el permís de GPS per mostrar el mapa en 3D i registrar la teva telemetria.',
+          message: 'Full Send necessita el permís de GPS per mostrar el mapa i registrar la teva telemetria.',
           type: 'warning',
         });
         return;
@@ -177,7 +177,7 @@ export default function FullSendLiveScreen() {
 
         Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High }).then((loc) => {
           sendLocationToMap(loc.coords, true, selectedVehicle.icon);
-        }).catch(() => { });
+        }).catch(() => {});
       },
       themeToUse,
       true
@@ -204,7 +204,7 @@ export default function FullSendLiveScreen() {
     // Switch avatar to active vehicle on map
     Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High }).then((loc) => {
       sendLocationToMap(loc.coords, true, selectedVehicle.icon);
-    }).catch(() => { });
+    }).catch(() => {});
   };
 
   const handleStopSendIt = async () => {
@@ -239,7 +239,7 @@ export default function FullSendLiveScreen() {
         // Revert avatar to person
         Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }).then((loc) => {
           sendLocationToMap(loc.coords, false);
-        }).catch(() => { });
+        }).catch(() => {});
       },
     });
   };
@@ -249,10 +249,10 @@ export default function FullSendLiveScreen() {
       mapTheme === 'dark_road'
         ? 'snow_mountain'
         : mapTheme === 'snow_mountain'
-          ? 'satellite'
-          : mapTheme === 'satellite'
-            ? 'streets'
-            : 'dark_road';
+        ? 'satellite'
+        : mapTheme === 'satellite'
+        ? 'streets'
+        : 'dark_road';
     setMapTheme(next);
     webViewRef.current?.postMessage(
       JSON.stringify({ type: 'SET_THEME', themeKey: next })
@@ -285,7 +285,7 @@ export default function FullSendLiveScreen() {
           sendLocationToMap(lastCoordsRef.current, isRecording);
         }
       }
-    } catch { }
+    } catch {}
   };
 
   const formatTime = (totalSec: number) => {
@@ -296,7 +296,7 @@ export default function FullSendLiveScreen() {
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
-  // Static HTML template (Memoized to prevent WebView from ever reloading on state change)
+  // Pokémon GO Style 3D Perspective Map HTML (Leaflet 1.9.4, 100% Android WebView compatible)
   const mapHtmlSource = useMemo(() => {
     const html = `
 <!DOCTYPE html>
@@ -304,8 +304,8 @@ export default function FullSendLiveScreen() {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@3.6.2/dist/maplibre-gl.css" />
-  <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body {
@@ -317,15 +317,43 @@ export default function FullSendLiveScreen() {
       user-select: none;
       -webkit-user-select: none;
     }
-    #map {
+    #viewport-container {
       width: 100%;
       height: 100%;
       position: absolute;
       top: 0;
       left: 0;
+      overflow: hidden;
+      perspective: 750px;
+      perspective-origin: 50% 65%;
+      background: #090D16;
     }
-    /* Pokémon GO Style Avatar */
-    .avatar-wrapper {
+    #map {
+      width: 100%;
+      height: 125%;
+      position: absolute;
+      top: -12%;
+      left: 0;
+      transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+      transform-origin: 50% 65%;
+      transform: rotateX(40deg) scale(1.15);
+      background: #090D16;
+    }
+    #viewport-container.mode-2d #map {
+      transform: rotateX(0deg) scale(1);
+      height: 100%;
+      top: 0;
+    }
+    /* Dark Road Theme (OSM tiles inverted to sleek Midnight Dark) */
+    .osm-dark-tiles {
+      filter: invert(92%) hue-rotate(180deg) brightness(85%) contrast(110%);
+    }
+    /* Alpine Snow Theme */
+    .snow-topo-tiles {
+      filter: brightness(1.1) contrast(1.1) saturate(0.25) hue-rotate(180deg);
+    }
+    /* Avatar: Clean circle standing upright in 3D (Sense cap anell brillant) */
+    .avatar-container {
       position: relative;
       width: 44px;
       height: 44px;
@@ -335,7 +363,6 @@ export default function FullSendLiveScreen() {
       pointer-events: none;
     }
     .avatar-bubble {
-      position: relative;
       width: 40px;
       height: 40px;
       border-radius: 50%;
@@ -344,298 +371,207 @@ export default function FullSendLiveScreen() {
       display: flex;
       align-items: center;
       justify-content: center;
-      box-shadow: 0 4px 16px rgba(0,0,0,0.85);
+      box-shadow: 0 4px 14px rgba(0,0,0,0.85);
       font-size: 22px;
       z-index: 2;
+      transform: rotateX(-40deg); /* Counter-rotate so avatar stands upright */
+    }
+    #viewport-container.mode-2d .avatar-bubble {
+      transform: rotateX(0deg);
     }
     .avatar-pointer {
       position: absolute;
-      top: -6px;
+      top: -7px;
       width: 0;
       height: 0;
       border-left: 6px solid transparent;
       border-right: 6px solid transparent;
       border-bottom: 9px solid #CCFF00;
       z-index: 3;
+      transform-origin: 50% 28px;
     }
-    .maplibregl-ctrl-bottom-left, .maplibregl-ctrl-bottom-right {
+    /* Hide Leaflet default attribution and controls for clean cockpit */
+    .leaflet-control-container {
       display: none !important;
     }
   </style>
 </head>
 <body>
-  <div id="map"></div>
+  <div id="viewport-container">
+    <div id="map"></div>
+  </div>
 
   <script>
-    var map;
+    var map = null;
     var playerMarker = null;
-    var avatarEl = null;
-    var liveTrailCoords = [];
+    var trailGlow = null;
+    var trailCore = null;
     var currentTheme = 'dark_road';
     var is3D = true;
     var followMode = true;
+    var pendingLocation = null;
 
-    var themeLayers = {
-      dark_road: ['layer-osm-dark', 'layer-dark-ref'],
-      snow_mountain: ['layer-topo', 'layer-dark-ref'],
-      satellite: ['layer-satellite'],
-      streets: ['layer-osm-streets']
+    // Tile Layer Definitions (100% Free, Zero API Keys, Reliable Worldwide)
+    var layers = {
+      dark_road: L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        className: 'osm-dark-tiles'
+      }),
+      snow_mountain: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}', {
+        maxZoom: 18,
+        className: 'snow-topo-tiles'
+      }),
+      satellite: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+        maxZoom: 19
+      }),
+      streets: L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19
+      })
     };
 
     function initMap() {
-      map = new maplibregl.Map({
-        container: 'map',
-        style: {
-          version: 8,
-          sources: {
-            // Free AWS Terrarium Elevation DEM for 3D Mountain Mesh
-            'terrainSource': {
-              type: 'raster-dem',
-              tiles: ['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'],
-              encoding: 'terrarium',
-              tileSize: 256,
-              maxzoom: 15
-            },
-            // OpenStreetMap full road & street network (Always visible everywhere)
-            'source-osm': {
-              type: 'raster',
-              tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
-              tileSize: 256,
-              maxzoom: 19
-            },
-            // Esri World Topo Map (Great for ski & elevation contours)
-            'source-topo': {
-              type: 'raster',
-              tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}'],
-              tileSize: 256,
-              maxzoom: 18
-            },
-            // Esri Satellite Aerial Imagery
-            'source-satellite': {
-              type: 'raster',
-              tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
-              tileSize: 256,
-              maxzoom: 19
-            },
-            // Road labels & place names overlay
-            'source-dark-ref': {
-              type: 'raster',
-              tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}'],
-              tileSize: 256,
-              maxzoom: 18
-            }
-          },
-          layers: [
-            // Dark Road Theme (OSM with night contrast)
-            {
-              id: 'layer-osm-dark',
-              type: 'raster',
-              source: 'source-osm',
-              layout: { visibility: 'visible' },
-              paint: {
-                'raster-saturation': -0.75,
-                'raster-contrast': 0.35,
-                'raster-brightness-max': 0.8
-              }
-            },
-            // Vibrant Streets Theme
-            {
-              id: 'layer-osm-streets',
-              type: 'raster',
-              source: 'source-osm',
-              layout: { visibility: 'none' }
-            },
-            // Alpine Snow / Topo Theme
-            {
-              id: 'layer-topo',
-              type: 'raster',
-              source: 'source-topo',
-              layout: { visibility: 'none' },
-              paint: {
-                'raster-saturation': -0.65,
-                'raster-contrast': 0.25,
-                'raster-brightness-max': 1.15
-              }
-            },
-            // Satellite Aerial Theme
-            {
-              id: 'layer-satellite',
-              type: 'raster',
-              source: 'source-satellite',
-              layout: { visibility: 'none' }
-            },
-            // Road Labels Overlay
-            {
-              id: 'layer-dark-ref',
-              type: 'raster',
-              source: 'source-dark-ref',
-              layout: { visibility: 'visible' }
-            }
-          ]
-        },
-        center: [2.1734, 41.3851], // Initial center (Barcelona/Catalonia), immediately flies to user
-        zoom: 15.5,
-        pitch: 58,
-        bearing: 0,
-        maxPitch: 85
-      });
-
-      map.touchPitch.enable();
-      map.touchZoomRotate.enable();
-
-      map.on('dragstart', function() {
-        followMode = false;
-      });
-
-      map.on('load', function() {
-        // Enable 3D Terrain
-        try {
-          map.setTerrain({ source: 'terrainSource', exaggeration: 1.55 });
-        } catch(e) {}
-
-        // Live recorded trail source
-        map.addSource('live-trail-source', {
-          type: 'geojson',
-          data: {
-            type: 'Feature',
-            geometry: {
-              type: 'LineString',
-              coordinates: []
-            }
-          }
+      if (map) return;
+      try {
+        map = L.map('map', {
+          center: [41.3851, 2.1734],
+          zoom: 16,
+          zoomControl: false,
+          attributionControl: false
         });
 
-        map.addLayer({
-          id: 'live-trail-glow',
-          type: 'line',
-          source: 'live-trail-source',
-          paint: {
-            'line-color': '#CCFF00',
-            'line-width': 9,
-            'line-opacity': 0.5,
-            'line-blur': 3
-          }
+        // Add active tile theme
+        layers[currentTheme].addTo(map);
+
+        // Glowing live route trail
+        trailGlow = L.polyline([], {
+          color: '#CCFF00',
+          weight: 8,
+          opacity: 0.45,
+          lineCap: 'round',
+          lineJoin: 'round'
+        }).addTo(map);
+
+        trailCore = L.polyline([], {
+          color: '#E2F952',
+          weight: 4,
+          opacity: 1.0,
+          lineCap: 'round',
+          lineJoin: 'round'
+        }).addTo(map);
+
+        createAvatarMarker([41.3851, 2.1734]);
+
+        map.on('dragstart', function() {
+          followMode = false;
         });
 
-        map.addLayer({
-          id: 'live-trail-core',
-          type: 'line',
-          source: 'live-trail-source',
-          paint: {
-            'line-color': '#E2F952',
-            'line-width': 4.5,
-            'line-opacity': 1.0
-          }
-        });
+        // Invalidate size to guarantee tile rendering
+        setTimeout(function() {
+          if (map) map.invalidateSize();
+        }, 150);
+        setTimeout(function() {
+          if (map) map.invalidateSize();
+        }, 600);
 
-        createAvatarMarker([2.1734, 41.3851]);
-
-        // Handshake: notify React Native that the map is ready
-        if (window.ReactNativeWebView) {
-          window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'MAP_LOADED' }));
+        // If pending location was received before map ready, apply now
+        if (pendingLocation) {
+          updatePlayer(pendingLocation);
+          pendingLocation = null;
         }
-      });
+
+        // Notify React Native that map is ready
+        sendToNative({ type: 'MAP_LOADED' });
+      } catch(e) {
+        sendToNative({ type: 'MAP_ERROR', error: String(e) });
+      }
     }
 
-    function createAvatarMarker(lngLat) {
-      avatarEl = document.createElement('div');
-      avatarEl.className = 'avatar-wrapper';
-      avatarEl.innerHTML = '<div class="avatar-pointer"></div><div class="avatar-bubble"><span id="avatarIcon">🧍</span></div>';
+    function sendToNative(data) {
+      if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
+        window.ReactNativeWebView.postMessage(JSON.stringify(data));
+      }
+    }
 
-      playerMarker = new maplibregl.Marker({ element: avatarEl })
-        .setLngLat(lngLat)
-        .addTo(map);
+    function createAvatarMarker(latLng) {
+      var icon = L.divIcon({
+        className: '',
+        html: '<div class="avatar-container"><div class="avatar-pointer"></div><div class="avatar-bubble"><span id="avatarIcon">🧍</span></div></div>',
+        iconSize: [44, 44],
+        iconAnchor: [22, 22]
+      });
+
+      playerMarker = L.marker(latLng, { icon: icon }).addTo(map);
     }
 
     function updatePlayer(data) {
-      if (!map) return;
-      var lngLat = [data.lng, data.lat];
+      if (!map) {
+        pendingLocation = data;
+        return;
+      }
+      var latLng = [data.lat, data.lng];
 
       if (!playerMarker) {
-        createAvatarMarker(lngLat);
+        createAvatarMarker(latLng);
       } else {
-        playerMarker.setLngLat(lngLat);
+        playerMarker.setLatLng(latLng);
       }
 
-      // Rotate avatar according to GPS heading
-      if (avatarEl && data.heading !== undefined) {
-        avatarEl.style.transform = 'rotate(' + (data.heading || 0) + 'deg)';
+      // Rotate directional arrow pointer
+      var pointerEl = document.querySelector('.avatar-pointer');
+      if (pointerEl && data.heading !== undefined) {
+        pointerEl.style.transform = 'rotate(' + data.heading + 'deg)';
       }
 
-      // Change avatar: Person when idle, Vehicle when recording
+      // Transform avatar: Person when idle, Machine when recording
       var iconEl = document.getElementById('avatarIcon');
       if (iconEl) {
         iconEl.innerText = data.isRecording ? (data.vehicleIcon || '🏎️') : '🧍';
       }
 
-      // Live glowing trail while recording
+      // Live glowing trail
       if (data.isRecording) {
-        liveTrailCoords.push(lngLat);
-        var src = map.getSource('live-trail-source');
-        if (src) {
-          src.setData({
-            type: 'Feature',
-            geometry: {
-              type: 'LineString',
-              coordinates: liveTrailCoords
-            }
-          });
-        }
+        trailGlow.addLatLng(latLng);
+        trailCore.addLatLng(latLng);
       } else {
-        if (liveTrailCoords.length > 0) {
-          liveTrailCoords = [];
-          var src = map.getSource('live-trail-source');
-          if (src) src.setData({ type: 'Feature', geometry: { type: 'LineString', coordinates: [] } });
+        if (trailGlow.getLatLngs().length > 0) {
+          trailGlow.setLatLngs([]);
+          trailCore.setLatLngs([]);
         }
       }
 
-      // Pokémon GO camera follow
+      // Follow mode camera
       if (followMode) {
-        map.easeTo({
-          center: lngLat,
-          pitch: is3D ? 58 : 0,
-          zoom: 15.5,
-          duration: 900
-        });
+        map.panTo(latLng, { animate: true, duration: 0.8 });
       }
     }
 
     function recenterOnPlayer() {
       followMode = true;
-      if (playerMarker) {
-        map.easeTo({
-          center: playerMarker.getLngLat(),
-          pitch: is3D ? 58 : 0,
-          zoom: 16,
-          duration: 700
-        });
+      if (playerMarker && map) {
+        map.setView(playerMarker.getLatLng(), 16.5, { animate: true });
       }
     }
 
     function applyTheme(themeKey) {
-      var all = ['layer-osm-dark', 'layer-osm-streets', 'layer-topo', 'layer-satellite', 'layer-dark-ref'];
-      all.forEach(function(l) {
-        if (map.getLayer(l)) map.setLayoutProperty(l, 'visibility', 'none');
+      if (!map || !layers[themeKey]) return;
+      map.eachLayer(function(l) {
+        if (l === layers.dark_road || l === layers.snow_mountain || l === layers.satellite || l === layers.streets) {
+          map.removeLayer(l);
+        }
       });
-      var active = themeLayers[themeKey] || themeLayers.dark_road;
-      active.forEach(function(l) {
-        if (map.getLayer(l)) map.setLayoutProperty(l, 'visibility', 'visible');
-      });
+      layers[themeKey].addTo(map);
+      currentTheme = themeKey;
     }
 
     function toggle3D(val) {
       is3D = val;
-      if (is3D) {
-        try {
-          map.setTerrain({ source: 'terrainSource', exaggeration: 1.55 });
-        } catch(e) {}
-        map.easeTo({ pitch: 58, duration: 700 });
-      } else {
-        try {
-          map.setTerrain(null);
-        } catch(e) {}
-        map.easeTo({ pitch: 0, bearing: 0, duration: 700 });
+      var vp = document.getElementById('viewport-container');
+      if (vp) {
+        vp.className = is3D ? '' : 'mode-2d';
       }
+      setTimeout(function() {
+        if (map) map.invalidateSize();
+      }, 300);
     }
 
     function handleIncomingMessage(event) {
@@ -655,11 +591,18 @@ export default function FullSendLiveScreen() {
       } catch(e) {}
     }
 
-    // Support both window and document message dispatching on Android
     window.addEventListener('message', handleIncomingMessage);
     document.addEventListener('message', handleIncomingMessage);
 
-    window.onload = initMap;
+    // Infallible polling boot: runs the instant Leaflet script loads
+    function boot() {
+      if (typeof L !== 'undefined' && document.getElementById('map')) {
+        initMap();
+      } else {
+        setTimeout(boot, 40);
+      }
+    }
+    boot();
   </script>
 </body>
 </html>
@@ -673,7 +616,7 @@ export default function FullSendLiveScreen() {
       <WebView
         ref={webViewRef}
         originWhitelist={['*']}
-        source={mapHtmlSource}
+        source={{ html: mapHtmlSource.html, baseUrl: 'https://cdnjs.cloudflare.com' }}
         style={styles.webView}
         javaScriptEnabled={true}
         domStorageEnabled={true}
@@ -682,6 +625,10 @@ export default function FullSendLiveScreen() {
         androidHardwareAccelerationDisabled={false}
         scrollEnabled={false}
         onMessage={handleWebViewMessage}
+        allowFileAccess={true}
+        allowUniversalAccessFromFileURLs={true}
+        onError={() => {}}
+        onHttpError={() => {}}
       />
 
       {/* Top Floating Bar: Vehicle Selector & HUD Controls */}
@@ -711,10 +658,10 @@ export default function FullSendLiveScreen() {
                 mapTheme === 'snow_mountain'
                   ? 'snow'
                   : mapTheme === 'satellite'
-                    ? 'globe'
-                    : mapTheme === 'streets'
-                      ? 'map'
-                      : 'moon'
+                  ? 'globe'
+                  : mapTheme === 'streets'
+                  ? 'map'
+                  : 'moon'
               }
               size={18}
               color="#FFFFFF"
