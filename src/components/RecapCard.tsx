@@ -102,6 +102,22 @@ export const RecapCard: React.FC<RecapCardProps> = ({ item, year }) => {
               <Text style={styles.routeLabel}>Vel. mitjana anual</Text>
             </View>
           </View>
+          {Boolean(routeStats.totalElevationGainM) && (
+            <View style={[styles.routeGrid, { marginTop: 8 }]}>
+              <View style={styles.routeCol}>
+                <Text style={[styles.routeVal, { color: '#10B981' }]}>
+                  +{routeStats.totalElevationGainM} m
+                </Text>
+                <Text style={styles.routeLabel}>Desnivell (+D)</Text>
+              </View>
+              <View style={styles.routeCol}>
+                <Text style={[styles.routeVal, { color: '#F43F5E' }]}>
+                  -{routeStats.totalElevationLossM || 0} m
+                </Text>
+                <Text style={styles.routeLabel}>Descens (-D)</Text>
+              </View>
+            </View>
+          )}
         </View>
       )}
 

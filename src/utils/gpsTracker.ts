@@ -2,18 +2,23 @@ import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
+import { GpsPoint, MapTheme } from '../types/database';
 
 export const GPS_ROUTE_TASK = 'STATSTRACKER_GPS_ROUTE_TASK';
-const ACTIVE_ROUTE_STORAGE_KEY = '@statstracker_active_gps_route';
+const ACTIVE_ROUTE_STORAGE_KEY = '@statstracker_active_gps_route_v3';
 
 export interface RouteTrackingState {
   isTracking: boolean;
-  startTime: number; // timestamp in ms
+  startTime: number;
   elapsedSeconds: number;
   distanceKm: number;
   currentSpeedKmh: number;
   maxSpeedKmh: number;
   avgSpeedKmh: number;
+  currentAltitudeM: number | null;
+  elevationGainM: number;
+  elevationLossM: number;
+  coordinatesCount: number;
 }
 
 interface StoredRouteData {
@@ -22,9 +27,14 @@ interface StoredRouteData {
   maxSpeedKmh: number;
   lastCoords: Location.LocationObjectCoords | null;
   lastTimestamp: number;
+  coordinates: GpsPoint[];
+  elevationGainM: number;
+  elevationLossM: number;
+  maxAltitudeM: number | null;
+  minAltitudeM: number | null;
+  mapTheme: MapTheme;
 }
 
-// Distance calculation using Haversine formula (km)
 export function calculateDistanceKm(
   lat1: number,
   lon1: number,
@@ -44,17 +54,21 @@ export function calculateDistanceKm(
   return R * c;
 }
 
-// Active singleton route state
 let activeRoute: {
   startTime: number;
   distanceKm: number;
   maxSpeedKmh: number;
   lastCoords: Location.LocationObjectCoords | null;
   lastTimestamp: number;
+  coordinates: GpsPoint[];
+  elevationGainM: number;
+  elevationLossM: number;
+  maxAltitudeM: number | null;
+  minAltitudeM: number | null;
+  mapTheme: MapTheme;
   onUpdateCallback: ((state: RouteTrackingState) => void) | null;
 } | null = null;
 
-// Save route snapshot to storage for resilience against OS memory cleanups
 async function persistRouteState() {
   if (!activeRoute) return;
   const snapshot: StoredRouteData = {
@@ -63,6 +77,12 @@ async function persistRouteState() {
     maxSpeedKmh: activeRoute.maxSpeedKmh,
     lastCoords: activeRoute.lastCoords,
     lastTimestamp: activeRoute.lastTimestamp,
+    coordinates: activeRoute.coordinates,
+    elevationGainM: activeRoute.elevationGainM,
+    elevationLossM: activeRoute.elevationLossM,
+    maxAltitudeM: activeRoute.maxAltitudeM,
+    minAltitudeM: activeRoute.minAltitudeM,
+    mapTheme: activeRoute.mapTheme,
   };
   try {
     await AsyncStorage.setItem(ACTIVE_ROUTE_STORAGE_KEY, JSON.stringify(snapshot));
@@ -71,13 +91,9 @@ async function persistRouteState() {
   }
 }
 
-// Define background task (runs even when phone is locked / screen off)
 TaskManager.defineTask(GPS_ROUTE_TASK, async ({ data, error }) => {
-  if (error || !data) {
-    return;
-  }
+  if (error || !data) return;
 
-  // If memory was cleared while screen was off, restore from storage
   if (!activeRoute) {
     try {
       const stored = await AsyncStorage.getItem(ACTIVE_ROUTE_STORAGE_KEY);
@@ -110,17 +126,24 @@ export function processLocationUpdate(loc: Location.LocationObject) {
 
   const coords = loc.coords;
 
-  // 1. Accuracy filter: ignore GPS fixes with poor precision (> 35 meters)
-  if (coords.accuracy !== null && coords.accuracy !== undefined && coords.accuracy > 35) {
+  // 1. Accuracy filter (allow vehicle highway speeds up to 120m)
+  if (coords.accuracy !== null && coords.accuracy !== undefined && coords.accuracy > 120) {
     return;
   }
 
-  // 2. Hardware GPS speed (Doppler)
+  // 2. Hardware GPS Doppler speed
   const hardwareSpeed = coords.speed !== null && coords.speed !== undefined && coords.speed >= 0
     ? coords.speed * 3.6
     : 0;
 
-  // 3. Coordinate distance & segment speed calculation
+  if (hardwareSpeed > 0 && hardwareSpeed <= 260) {
+    const roundedHw = Math.round(hardwareSpeed);
+    if (roundedHw > activeRoute.maxSpeedKmh) {
+      activeRoute.maxSpeedKmh = roundedHw;
+    }
+  }
+
+  // 3. Distance & segment speed
   let segmentSpeed = 0;
   let dist = 0;
 
@@ -137,36 +160,68 @@ export function processLocationUpdate(loc: Location.LocationObject) {
       segmentSpeed = dist / (timeDeltaSec / 3600);
     }
 
-    // Anti-teleportation filter: reject GPS jump spikes (> 230 km/h)
-    if (segmentSpeed <= 230) {
-      // Ignore stationary jitter (< 4 meters)
-      if (dist >= 0.004) {
-        activeRoute.distanceKm = Number((activeRoute.distanceKm + dist).toFixed(2));
+    if (segmentSpeed <= 260 && dist >= 0.004) {
+      activeRoute.distanceKm = Number((activeRoute.distanceKm + dist).toFixed(2));
+
+      if (hardwareSpeed <= 0 && segmentSpeed > 0 && segmentSpeed <= 260) {
+        const roundedSeg = Math.round(segmentSpeed);
+        if (roundedSeg > activeRoute.maxSpeedKmh) {
+          activeRoute.maxSpeedKmh = roundedSeg;
+        }
       }
-    } else {
-      // Discard spike jump, only update baseline position
+    } else if (dist > 2.0 && segmentSpeed > 260) {
       activeRoute.lastCoords = coords;
       activeRoute.lastTimestamp = loc.timestamp;
       return;
     }
   }
 
-  // 4. Effective speed determination (combining hardware speed and segment speed)
-  // When mobile is locked, hardware speed is sometimes reported as 0 by power savers, so segmentSpeed acts as reliable fallback
-  let effectiveSpeed = hardwareSpeed > 0 ? hardwareSpeed : segmentSpeed;
-  if (effectiveSpeed > 230) effectiveSpeed = 0;
+  // 4. Altitude & Elevation Gain/Loss (+D / -D)
+  const currentAlt = coords.altitude !== null && coords.altitude !== undefined
+    ? Math.round(coords.altitude)
+    : null;
 
-  const roundedSpeed = Math.round(effectiveSpeed);
+  if (currentAlt !== null) {
+    if (activeRoute.maxAltitudeM === null || currentAlt > activeRoute.maxAltitudeM) {
+      activeRoute.maxAltitudeM = currentAlt;
+    }
+    if (activeRoute.minAltitudeM === null || currentAlt < activeRoute.minAltitudeM) {
+      activeRoute.minAltitudeM = currentAlt;
+    }
 
-  // Update max speed (with realistic vehicle cap)
-  if (roundedSpeed > activeRoute.maxSpeedKmh && roundedSpeed <= 230) {
-    activeRoute.maxSpeedKmh = roundedSpeed;
+    if (activeRoute.lastCoords?.altitude !== null && activeRoute.lastCoords?.altitude !== undefined) {
+      const altDelta = currentAlt - Math.round(activeRoute.lastCoords.altitude);
+      // Filter micro elevation jitter (> 2 meters and < 200m delta)
+      if (altDelta >= 2 && altDelta <= 200) {
+        activeRoute.elevationGainM += altDelta;
+      } else if (altDelta <= -2 && altDelta >= -200) {
+        activeRoute.elevationLossM += Math.abs(altDelta);
+      }
+    }
+  }
+
+  const effectiveSpeed = hardwareSpeed > 0 ? Math.round(hardwareSpeed) : Math.round(segmentSpeed);
+
+  // 5. Breadcrumb route coordinates (for rendering on map)
+  const lastPoint = activeRoute.coordinates[activeRoute.coordinates.length - 1];
+  const shouldAddPoint =
+    activeRoute.coordinates.length === 0 ||
+    dist >= 0.008 || // 8 meters
+    (lastPoint && loc.timestamp - lastPoint.timestamp >= 5000); // at least every 5s
+
+  if (shouldAddPoint && activeRoute.coordinates.length < 3500) {
+    activeRoute.coordinates.push({
+      latitude: Number(coords.latitude.toFixed(6)),
+      longitude: Number(coords.longitude.toFixed(6)),
+      altitude: currentAlt,
+      speed: effectiveSpeed,
+      timestamp: loc.timestamp,
+    });
   }
 
   activeRoute.lastCoords = coords;
   activeRoute.lastTimestamp = loc.timestamp;
 
-  // 5. Real-world elapsed time (wall-clock based)
   const elapsedSec = Math.max(1, Math.floor((Date.now() - activeRoute.startTime) / 1000));
   const hours = elapsedSec / 3600;
   const avgSpeed = hours > 0 && activeRoute.distanceKm > 0
@@ -179,15 +234,20 @@ export function processLocationUpdate(loc: Location.LocationObject) {
       startTime: activeRoute.startTime,
       elapsedSeconds: elapsedSec,
       distanceKm: activeRoute.distanceKm,
-      currentSpeedKmh: roundedSpeed,
+      currentSpeedKmh: effectiveSpeed,
       maxSpeedKmh: activeRoute.maxSpeedKmh,
       avgSpeedKmh: avgSpeed,
+      currentAltitudeM: currentAlt,
+      elevationGainM: activeRoute.elevationGainM,
+      elevationLossM: activeRoute.elevationLossM,
+      coordinatesCount: activeRoute.coordinates.length,
     });
   }
 }
 
 export async function startGpsTracking(
   onUpdate: (state: RouteTrackingState) => void,
+  mapTheme: MapTheme = 'dark_road',
   keepScreenAwake = true
 ): Promise<{ success: boolean; error?: string }> {
   try {
@@ -199,7 +259,7 @@ export async function startGpsTracking(
     try {
       await Location.requestBackgroundPermissionsAsync();
     } catch {
-      // Foreground service notification is sufficient on Android
+      // Foreground service notification is sufficient
     }
 
     const now = Date.now();
@@ -209,6 +269,12 @@ export async function startGpsTracking(
       maxSpeedKmh: 0,
       lastCoords: null,
       lastTimestamp: now,
+      coordinates: [],
+      elevationGainM: 0,
+      elevationLossM: 0,
+      maxAltitudeM: null,
+      minAltitudeM: null,
+      mapTheme,
       onUpdateCallback: onUpdate,
     };
 
@@ -225,13 +291,13 @@ export async function startGpsTracking(
     const hasStarted = await Location.hasStartedLocationUpdatesAsync(GPS_ROUTE_TASK).catch(() => false);
     if (!hasStarted) {
       await Location.startLocationUpdatesAsync(GPS_ROUTE_TASK, {
-        accuracy: Location.Accuracy.High,
-        timeInterval: 2000,
-        distanceInterval: 4, // 4 meters
+        accuracy: Location.Accuracy.BestForNavigation,
+        timeInterval: 1500,
+        distanceInterval: 4,
         showsBackgroundLocationIndicator: true,
         foregroundService: {
           notificationTitle: 'StatsTracker • Gravant trajecte',
-          notificationBody: 'Mesurant distància, velocitat màxima i temps...',
+          notificationBody: 'Mesurant distància, velocitat màxima, ruta i altitud...',
           notificationColor: '#6366F1',
           killServiceOnDestroy: false,
         },
@@ -249,6 +315,12 @@ export async function stopGpsTracking(): Promise<{
   duration_seconds: number;
   max_speed_kmh: number;
   avg_speed_kmh: number;
+  elevation_gain_m: number;
+  elevation_loss_m: number;
+  max_altitude_m: number | null;
+  min_altitude_m: number | null;
+  map_theme: MapTheme;
+  coordinates: GpsPoint[];
 }> {
   try {
     const hasStarted = await Location.hasStartedLocationUpdatesAsync(GPS_ROUTE_TASK).catch(() => false);
@@ -265,7 +337,6 @@ export async function stopGpsTracking(): Promise<{
     console.warn('Error deactivating keep awake:', e);
   }
 
-  // Restore snapshot if needed
   if (!activeRoute) {
     try {
       const stored = await AsyncStorage.getItem(ACTIVE_ROUTE_STORAGE_KEY);
@@ -282,10 +353,20 @@ export async function stopGpsTracking(): Promise<{
   activeRoute = null;
 
   if (!snapshot) {
-    return { distance_km: 0, duration_seconds: 0, max_speed_kmh: 0, avg_speed_kmh: 0 };
+    return {
+      distance_km: 0,
+      duration_seconds: 0,
+      max_speed_kmh: 0,
+      avg_speed_kmh: 0,
+      elevation_gain_m: 0,
+      elevation_loss_m: 0,
+      max_altitude_m: null,
+      min_altitude_m: null,
+      map_theme: 'dark_road',
+      coordinates: [],
+    };
   }
 
-  // Exact real-world elapsed time
   const totalElapsedSec = Math.max(1, Math.floor((Date.now() - snapshot.startTime) / 1000));
   const hours = totalElapsedSec / 3600;
   const finalAvgSpeed = hours > 0 && snapshot.distanceKm > 0
@@ -297,6 +378,12 @@ export async function stopGpsTracking(): Promise<{
     duration_seconds: totalElapsedSec,
     max_speed_kmh: snapshot.maxSpeedKmh,
     avg_speed_kmh: finalAvgSpeed,
+    elevation_gain_m: Math.round(snapshot.elevationGainM),
+    elevation_loss_m: Math.round(snapshot.elevationLossM),
+    max_altitude_m: snapshot.maxAltitudeM,
+    min_altitude_m: snapshot.minAltitudeM,
+    map_theme: snapshot.mapTheme,
+    coordinates: snapshot.coordinates,
   };
 }
 
@@ -315,6 +402,10 @@ export async function checkActiveRouteOnStartup(): Promise<RouteTrackingState | 
       currentSpeedKmh: 0,
       maxSpeedKmh: activeRoute.maxSpeedKmh,
       avgSpeedKmh: avgSpeed,
+      currentAltitudeM: activeRoute.coordinates[activeRoute.coordinates.length - 1]?.altitude || null,
+      elevationGainM: activeRoute.elevationGainM,
+      elevationLossM: activeRoute.elevationLossM,
+      coordinatesCount: activeRoute.coordinates.length,
     };
   }
 
@@ -339,6 +430,10 @@ export async function checkActiveRouteOnStartup(): Promise<RouteTrackingState | 
         currentSpeedKmh: 0,
         maxSpeedKmh: parsed.maxSpeedKmh,
         avgSpeedKmh: avgSpeed,
+        currentAltitudeM: parsed.coordinates[parsed.coordinates.length - 1]?.altitude || null,
+        elevationGainM: parsed.elevationGainM,
+        elevationLossM: parsed.elevationLossM,
+        coordinatesCount: parsed.coordinates.length,
       };
     }
   } catch {

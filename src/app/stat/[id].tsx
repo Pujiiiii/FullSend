@@ -15,6 +15,8 @@ import { aggregateEntries } from '../../utils/statsCalculations';
 import { Colors } from '../../utils/theme';
 import { CustomFieldsInput } from '../../components/CustomFieldsInput';
 import { GpsRouteTrackerModal } from '../../components/GpsRouteTrackerModal';
+import { RouteMapModal } from '../../components/RouteMapModal';
+import { StatEntry } from '../../types/database';
 
 export default function StatDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -22,9 +24,13 @@ export default function StatDetailScreen() {
 
   const [newValue, setNewValue] = useState('');
   const [newNote, setNewNote] = useState('');
+  const [routeDurationMin, setRouteDurationMin] = useState('');
+  const [routeMaxSpeed, setRouteMaxSpeed] = useState('');
+  const [routeElevationGain, setRouteElevationGain] = useState('');
   const [customFieldValues, setCustomFieldValues] = useState<Record<string, any>>({});
   const [adding, setAdding] = useState(false);
   const [gpsModalVisible, setGpsModalVisible] = useState(false);
+  const [selectedRouteModalEntry, setSelectedRouteModalEntry] = useState<StatEntry | null>(null);
 
   const stat = stats.find((s) => s.id === id);
 
@@ -66,14 +72,35 @@ export default function StatDetailScreen() {
 
     try {
       setAdding(true);
+      let finalMetadata: Record<string, any> = { ...customFieldValues };
+      if (stat.type === 'route') {
+        const durMin = parseFloat(routeDurationMin.replace(',', '.'));
+        const maxSpd = parseFloat(routeMaxSpeed.replace(',', '.'));
+        const elevGain = parseFloat(routeElevationGain.replace(',', '.'));
+        const hours = !isNaN(durMin) && durMin > 0 ? durMin / 60 : 0;
+        const avgSpd = hours > 0 && val > 0 ? Number((val / hours).toFixed(1)) : 0;
+
+        finalMetadata = {
+          ...finalMetadata,
+          distance_km: val,
+          duration_seconds: !isNaN(durMin) && durMin > 0 ? Math.round(durMin * 60) : 0,
+          max_speed_kmh: !isNaN(maxSpd) && maxSpd > 0 ? Math.round(maxSpd) : 0,
+          avg_speed_kmh: avgSpd,
+          elevation_gain_m: !isNaN(elevGain) && elevGain > 0 ? Math.round(elevGain) : undefined,
+        };
+      }
+
       await addEntry(
         stat.id,
         val,
         newNote || undefined,
-        Object.keys(customFieldValues).length > 0 ? customFieldValues : undefined
+        Object.keys(finalMetadata).length > 0 ? finalMetadata : undefined
       );
       setNewValue('');
       setNewNote('');
+      setRouteDurationMin('');
+      setRouteMaxSpeed('');
+      setRouteElevationGain('');
       setCustomFieldValues({});
     } catch (e: any) {
       Alert.alert('Error', e.message || 'No s\'ha pogut desar');
@@ -221,7 +248,7 @@ export default function StatDetailScreen() {
                 {(stat.type === 'numeric' || stat.type === 'rating' || stat.type === 'route') && (
                   <TextInput
                     style={styles.valInput}
-                    placeholder={`Valor (${stat.unit || 'num'})`}
+                    placeholder={stat.type === 'route' ? 'Distància (km)' : `Valor (${stat.unit || 'num'})`}
                     placeholderTextColor={Colors.textMuted}
                     keyboardType="decimal-pad"
                     value={newValue}
@@ -236,6 +263,39 @@ export default function StatDetailScreen() {
                   onChangeText={setNewNote}
                 />
               </View>
+
+              {stat.type === 'route' && (
+                <>
+                  <View style={[styles.formRow, { marginTop: 0 }]}>
+                    <TextInput
+                      style={styles.valInput}
+                      placeholder="Temps (minuts, ex: 50)"
+                      placeholderTextColor={Colors.textMuted}
+                      keyboardType="decimal-pad"
+                      value={routeDurationMin}
+                      onChangeText={setRouteDurationMin}
+                    />
+                    <TextInput
+                      style={styles.valInput}
+                      placeholder="Vel. punta (ex: 160)"
+                      placeholderTextColor={Colors.textMuted}
+                      keyboardType="decimal-pad"
+                      value={routeMaxSpeed}
+                      onChangeText={setRouteMaxSpeed}
+                    />
+                  </View>
+                  <View style={[styles.formRow, { marginTop: 0 }]}>
+                    <TextInput
+                      style={styles.valInput}
+                      placeholder="Desnivell +D en metres (opcional)"
+                      placeholderTextColor={Colors.textMuted}
+                      keyboardType="decimal-pad"
+                      value={routeElevationGain}
+                      onChangeText={setRouteElevationGain}
+                    />
+                  </View>
+                </>
+              )}
 
               <TouchableOpacity
                 style={[styles.addBtn, { backgroundColor: stat.color }]}
@@ -305,11 +365,40 @@ export default function StatDetailScreen() {
                 )}
 
                 {/* Route GPS secondary data */}
-                {maxSpeed !== undefined && (
+                {(maxSpeed !== undefined || item.metadata?.elevation_gain_m !== undefined) && (
                   <Text style={styles.extraMetadataText}>
-                    🚗 Vel. punta: {maxSpeed} km/h • Mitja: {avgSpeed} km/h
+                    {maxSpeed !== undefined ? `🚗 Vel. punta: ${maxSpeed} km/h • Mitja: ${avgSpeed} km/h` : ''}
                     {durationSec ? ` • Temps: ${Math.round(durationSec / 60)} min` : ''}
+                    {item.metadata?.elevation_gain_m ? ` • 🔺 +${item.metadata.elevation_gain_m}m` : ''}
+                    {item.metadata?.elevation_loss_m ? ` • 🔻 -${item.metadata.elevation_loss_m}m` : ''}
                   </Text>
+                )}
+
+                {/* View 3D Map & Elevation Profile Button */}
+                {(Boolean(item.metadata?.coordinates?.length) || stat.type === 'route') && (
+                  <TouchableOpacity
+                    style={[
+                      styles.viewMapBtn,
+                      {
+                        backgroundColor:
+                          item.metadata?.map_theme === 'snow_mountain'
+                            ? '#0284C7'
+                            : Colors.primary,
+                      },
+                    ]}
+                    onPress={() => setSelectedRouteModalEntry(item)}
+                  >
+                    <Ionicons
+                      name={item.metadata?.map_theme === 'snow_mountain' ? 'snow' : 'map'}
+                      size={14}
+                      color="#FFFFFF"
+                    />
+                    <Text style={styles.viewMapBtnText}>
+                      {item.metadata?.coordinates?.length
+                        ? 'Veure mapa 3D i perfil'
+                        : 'Veure resum del trajecte'}
+                    </Text>
+                  </TouchableOpacity>
                 )}
 
                 {item.note ? <Text style={styles.logNote}>{item.note}</Text> : null}
@@ -366,6 +455,16 @@ export default function StatDetailScreen() {
             route
           );
         }}
+      />
+
+      {/* 3D Interactive Route Map & Profile Modal */}
+      <RouteMapModal
+        visible={selectedRouteModalEntry !== null}
+        onClose={() => setSelectedRouteModalEntry(null)}
+        title={`${stat.name} • ${selectedRouteModalEntry?.value || 0} km`}
+        themeColor={stat.color}
+        metadata={selectedRouteModalEntry?.metadata}
+        distanceKm={selectedRouteModalEntry?.value}
       />
     </View>
   );
@@ -630,6 +729,22 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     marginTop: 4,
     fontWeight: '500',
+  },
+  viewMapBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    backgroundColor: Colors.primary,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    gap: 6,
+    marginTop: 8,
+  },
+  viewMapBtnText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '700',
   },
   logNote: {
     fontSize: 12,

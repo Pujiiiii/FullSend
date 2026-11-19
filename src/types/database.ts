@@ -64,11 +64,37 @@ export interface SecondaryFieldStat {
   average: number;
 }
 
+export interface GpsPoint {
+  latitude: number;
+  longitude: number;
+  altitude?: number | null;
+  speed?: number | null;
+  timestamp: number;
+}
+
+export type MapTheme = 'dark_road' | 'snow_mountain';
+
+export interface RouteMetadata {
+  distance_km: number;
+  duration_seconds: number;
+  max_speed_kmh: number;
+  avg_speed_kmh: number;
+  elevation_gain_m?: number;
+  elevation_loss_m?: number;
+  max_altitude_m?: number | null;
+  min_altitude_m?: number | null;
+  map_theme?: MapTheme;
+  coordinates?: GpsPoint[];
+  [key: string]: any;
+}
+
 export interface RouteStatsSummary {
   totalDistanceKm: number;
   totalDurationMinutes: number;
   maxSpeedKmh: number;
   avgSpeedKmh: number;
+  totalElevationGainM?: number;
+  totalElevationLossM?: number;
 }
 
 export interface YearSummaryItem {

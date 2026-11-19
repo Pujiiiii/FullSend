@@ -16,16 +16,12 @@ import {
   checkActiveRouteOnStartup,
   RouteTrackingState,
 } from '../utils/gpsTracker';
+import { MapTheme, RouteMetadata } from '../types/database';
 
 interface GpsRouteTrackerModalProps {
   visible: boolean;
   onClose: () => void;
-  onFinishRoute: (routeData: {
-    distance_km: number;
-    duration_seconds: number;
-    max_speed_kmh: number;
-    avg_speed_kmh: number;
-  }) => void;
+  onFinishRoute: (routeData: RouteMetadata) => void;
   statName?: string;
   themeColor?: string;
 }
@@ -37,30 +33,24 @@ export const GpsRouteTrackerModal: React.FC<GpsRouteTrackerModalProps> = ({
   statName = 'Trajecte en vehicle',
   themeColor = Colors.primary,
 }) => {
+  const isSkiStat = /ski|esqu[ií]|snow|muntanya|neu/i.test(statName);
+
   const [isTracking, setIsTracking] = useState(false);
   const [distanceKm, setDistanceKm] = useState(0);
   const [currentSpeedKmh, setCurrentSpeedKmh] = useState(0);
   const [maxSpeedKmh, setMaxSpeedKmh] = useState(0);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [currentAltitudeM, setCurrentAltitudeM] = useState<number | null>(null);
+  const [elevationGainM, setElevationGainM] = useState(0);
+  const [elevationLossM, setElevationLossM] = useState(0);
+  const [coordinatesCount, setCoordinatesCount] = useState(0);
   const [keepScreenAwake, setKeepScreenAwake] = useState(true);
+  const [mapTheme, setMapTheme] = useState<MapTheme>(
+    isSkiStat ? 'snow_mountain' : 'dark_road'
+  );
 
   const startTimeRef = useRef<number | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  // Sync state when modal becomes visible
-  useEffect(() => {
-    if (visible) {
-      checkActiveRouteOnStartup().then((existing) => {
-        if (existing && existing.isTracking) {
-          setIsTracking(true);
-          setDistanceKm(existing.distanceKm);
-          setMaxSpeedKmh(existing.maxSpeedKmh);
-          startTimeRef.current = existing.startTime;
-          startUiTimer(existing.startTime);
-        }
-      });
-    }
-  }, [visible]);
 
   const startUiTimer = (startMs: number | null) => {
     if (timerRef.current) clearInterval(timerRef.current);
@@ -73,12 +63,39 @@ export const GpsRouteTrackerModal: React.FC<GpsRouteTrackerModalProps> = ({
     }, 1000);
   };
 
+  // Sync state when modal becomes visible
+  useEffect(() => {
+    if (visible) {
+      checkActiveRouteOnStartup().then((existing) => {
+        if (existing && existing.isTracking) {
+          setIsTracking(true);
+          setDistanceKm(existing.distanceKm);
+          setMaxSpeedKmh(existing.maxSpeedKmh);
+          setCurrentAltitudeM(existing.currentAltitudeM);
+          setElevationGainM(existing.elevationGainM);
+          setElevationLossM(existing.elevationLossM);
+          setCoordinatesCount(existing.coordinatesCount);
+          startTimeRef.current = existing.startTime;
+          startUiTimer(existing.startTime);
+        }
+      });
+    }
+  }, [visible]);
+
   const handleStart = async () => {
-    const res = await startGpsTracking((state: RouteTrackingState) => {
-      setDistanceKm(state.distanceKm);
-      setCurrentSpeedKmh(state.currentSpeedKmh);
-      setMaxSpeedKmh(state.maxSpeedKmh);
-    }, keepScreenAwake);
+    const res = await startGpsTracking(
+      (state: RouteTrackingState) => {
+        setDistanceKm(state.distanceKm);
+        setCurrentSpeedKmh(state.currentSpeedKmh);
+        setMaxSpeedKmh(state.maxSpeedKmh);
+        setCurrentAltitudeM(state.currentAltitudeM);
+        setElevationGainM(state.elevationGainM);
+        setElevationLossM(state.elevationLossM);
+        setCoordinatesCount(state.coordinatesCount);
+      },
+      mapTheme,
+      keepScreenAwake
+    );
 
     if (!res.success) {
       Alert.alert('Error GPS', res.error || 'No s\'ha pogut activar el GPS.');
@@ -91,6 +108,9 @@ export const GpsRouteTrackerModal: React.FC<GpsRouteTrackerModalProps> = ({
     setDistanceKm(0);
     setCurrentSpeedKmh(0);
     setMaxSpeedKmh(0);
+    setElevationGainM(0);
+    setElevationLossM(0);
+    setCoordinatesCount(0);
     setElapsedSeconds(0);
     startUiTimer(now);
   };
@@ -139,7 +159,6 @@ export const GpsRouteTrackerModal: React.FC<GpsRouteTrackerModalProps> = ({
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  // Real-world average speed calculation
   const hours = elapsedSeconds / 3600;
   const currentAvgSpeed = hours > 0 && distanceKm > 0 ? (distanceKm / hours).toFixed(1) : '0';
 
@@ -150,7 +169,11 @@ export const GpsRouteTrackerModal: React.FC<GpsRouteTrackerModalProps> = ({
           {/* Header */}
           <View style={styles.header}>
             <View style={styles.headerTitleRow}>
-              <Ionicons name="navigate-circle" size={24} color={themeColor} />
+              <Ionicons
+                name={mapTheme === 'snow_mountain' ? 'snow' : 'navigate-circle'}
+                size={24}
+                color={mapTheme === 'snow_mountain' ? '#38BDF8' : themeColor}
+              />
               <Text style={styles.headerTitle}>{statName}</Text>
             </View>
             <TouchableOpacity onPress={isTracking ? handleCancel : onClose}>
@@ -158,9 +181,63 @@ export const GpsRouteTrackerModal: React.FC<GpsRouteTrackerModalProps> = ({
             </TouchableOpacity>
           </View>
 
+          {/* Activity / Theme Selector (before starting) */}
+          {!isTracking && (
+            <View style={styles.themeSelectorRow}>
+              <TouchableOpacity
+                style={[
+                  styles.themeTab,
+                  mapTheme === 'dark_road' && styles.themeTabActive,
+                  mapTheme === 'dark_road' && { borderColor: themeColor },
+                ]}
+                onPress={() => setMapTheme('dark_road')}
+              >
+                <Text style={styles.themeTabEmoji}>🚗</Text>
+                <View>
+                  <Text
+                    style={[
+                      styles.themeTabText,
+                      mapTheme === 'dark_road' && { color: '#FFFFFF', fontWeight: '800' },
+                    ]}
+                  >
+                    Carretera / Offroad
+                  </Text>
+                  <Text style={styles.themeTabSub}>Estètica Dark</Text>
+                </View>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.themeTab,
+                  mapTheme === 'snow_mountain' && styles.themeTabActive,
+                  mapTheme === 'snow_mountain' && { borderColor: '#38BDF8' },
+                ]}
+                onPress={() => setMapTheme('snow_mountain')}
+              >
+                <Text style={styles.themeTabEmoji}>⛷️</Text>
+                <View>
+                  <Text
+                    style={[
+                      styles.themeTabText,
+                      mapTheme === 'snow_mountain' && { color: '#38BDF8', fontWeight: '800' },
+                    ]}
+                  >
+                    Esquí / Muntanya
+                  </Text>
+                  <Text style={styles.themeTabSub}>Relleu de Neu</Text>
+                </View>
+              </TouchableOpacity>
+            </View>
+          )}
+
           {/* Speedometer display */}
           <View style={styles.speedometerContainer}>
-            <Text style={[styles.speedNumber, { color: themeColor }]}>
+            <Text
+              style={[
+                styles.speedNumber,
+                { color: mapTheme === 'snow_mountain' ? '#38BDF8' : themeColor },
+              ]}
+            >
               {currentSpeedKmh}
             </Text>
             <Text style={styles.speedUnit}>KM/H</Text>
@@ -169,7 +246,7 @@ export const GpsRouteTrackerModal: React.FC<GpsRouteTrackerModalProps> = ({
             </Text>
           </View>
 
-          {/* Metrics Grid */}
+          {/* Primary Metrics Grid */}
           <View style={styles.metricsGrid}>
             <View style={styles.metricItem}>
               <Text style={styles.metricVal}>{distanceKm} km</Text>
@@ -184,6 +261,7 @@ export const GpsRouteTrackerModal: React.FC<GpsRouteTrackerModalProps> = ({
             </View>
           </View>
 
+          {/* Secondary Speed & Elevation Metrics Grid */}
           <View style={[styles.metricsGrid, { marginTop: 10 }]}>
             <View style={styles.metricItem}>
               <Text style={styles.metricVal}>{maxSpeedKmh} km/h</Text>
@@ -196,7 +274,35 @@ export const GpsRouteTrackerModal: React.FC<GpsRouteTrackerModalProps> = ({
               <Text style={styles.metricVal}>{currentAvgSpeed} km/h</Text>
               <Text style={styles.metricLabel}>Vel. mitjana</Text>
             </View>
+
+            <View style={styles.metricDivider} />
+
+            <View style={styles.metricItem}>
+              <Text style={[styles.metricVal, { color: '#10B981' }]}>
+                +{elevationGainM} m
+              </Text>
+              <Text style={styles.metricLabel}>+D Acumulat</Text>
+            </View>
           </View>
+
+          {/* Altitude & GPS signal bar if tracking */}
+          {isTracking && (
+            <View style={styles.altitudeLiveRow}>
+              <View style={styles.altitudeTag}>
+                <Ionicons name="trending-up" size={14} color="#38BDF8" />
+                <Text style={styles.altitudeTagText}>
+                  Alt: {currentAltitudeM !== null ? `${currentAltitudeM}m` : '--'} • 🔻 -{elevationLossM}m
+                </Text>
+              </View>
+
+              <View style={styles.altitudeTag}>
+                <Ionicons name="map" size={14} color="#10B981" />
+                <Text style={styles.altitudeTagText}>
+                  Punts ruta: {coordinatesCount}
+                </Text>
+              </View>
+            </View>
+          )}
 
           {/* Keep screen awake toggle */}
           <View style={styles.awakeRow}>
@@ -205,7 +311,10 @@ export const GpsRouteTrackerModal: React.FC<GpsRouteTrackerModalProps> = ({
             <Switch
               value={keepScreenAwake}
               onValueChange={setKeepScreenAwake}
-              trackColor={{ false: Colors.surfaceLight, true: themeColor }}
+              trackColor={{
+                false: Colors.surfaceLight,
+                true: mapTheme === 'snow_mountain' ? '#38BDF8' : themeColor,
+              }}
               thumbColor="#FFFFFF"
             />
           </View>
@@ -214,7 +323,13 @@ export const GpsRouteTrackerModal: React.FC<GpsRouteTrackerModalProps> = ({
           <View style={styles.actionsContainer}>
             {!isTracking ? (
               <TouchableOpacity
-                style={[styles.startBtn, { backgroundColor: themeColor }]}
+                style={[
+                  styles.startBtn,
+                  {
+                    backgroundColor:
+                      mapTheme === 'snow_mountain' ? '#0284C7' : themeColor,
+                  },
+                ]}
                 onPress={handleStart}
               >
                 <Ionicons name="play" size={22} color="#FFFFFF" />
@@ -226,7 +341,7 @@ export const GpsRouteTrackerModal: React.FC<GpsRouteTrackerModalProps> = ({
                 onPress={handleFinish}
               >
                 <Ionicons name="stop" size={22} color="#FFFFFF" />
-                <Text style={styles.finishBtnText}>Finalitzar i desar</Text>
+                <Text style={styles.finishBtnText}>Finalitzar i desar amb mapa</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -254,7 +369,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 20,
+    marginBottom: 16,
   },
   headerTitleRow: {
     flexDirection: 'row',
@@ -266,22 +381,54 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: Colors.text,
   },
+  themeSelectorRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 14,
+  },
+  themeTab: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.inputBg,
+    borderRadius: 12,
+    padding: 10,
+    gap: 8,
+    borderWidth: 1.5,
+    borderColor: Colors.border,
+  },
+  themeTabActive: {
+    backgroundColor: 'rgba(99, 102, 241, 0.12)',
+  },
+  themeTabEmoji: {
+    fontSize: 20,
+  },
+  themeTabText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: Colors.textSecondary,
+  },
+  themeTabSub: {
+    fontSize: 10,
+    color: Colors.textMuted,
+    marginTop: 1,
+  },
   speedometerContainer: {
     alignItems: 'center',
-    paddingVertical: 20,
+    paddingVertical: 18,
     backgroundColor: Colors.inputBg,
     borderRadius: 20,
     borderWidth: 1,
     borderColor: Colors.border,
-    marginBottom: 16,
+    marginBottom: 14,
   },
   speedNumber: {
-    fontSize: 64,
+    fontSize: 60,
     fontWeight: '900',
     letterSpacing: -1,
   },
   speedUnit: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '800',
     color: Colors.textSecondary,
     letterSpacing: 1,
@@ -295,7 +442,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     backgroundColor: Colors.inputBg,
     borderRadius: 14,
-    paddingVertical: 14,
+    paddingVertical: 12,
     alignItems: 'center',
     justifyContent: 'space-around',
     borderWidth: 1,
@@ -305,7 +452,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   metricVal: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '800',
     color: Colors.text,
   },
@@ -316,8 +463,31 @@ const styles = StyleSheet.create({
   },
   metricDivider: {
     width: 1,
-    height: 30,
+    height: 26,
     backgroundColor: Colors.border,
+  },
+  altitudeLiveRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 10,
+    gap: 8,
+  },
+  altitudeTag: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.inputBg,
+    paddingVertical: 6,
+    borderRadius: 8,
+    gap: 6,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  altitudeTagText: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    fontWeight: '600',
   },
   awakeRow: {
     flexDirection: 'row',

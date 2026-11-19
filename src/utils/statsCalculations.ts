@@ -157,15 +157,21 @@ export function calculateYearSummary(
       let totalDist = 0;
       let totalDurationSec = 0;
       let maxSpeed = 0;
+      let totalElevationGain = 0;
+      let totalElevationLoss = 0;
 
       statEntriesThisYear.forEach((entry) => {
         const dist = entry.metadata?.distance_km ?? entry.value;
         const dur = entry.metadata?.duration_seconds ?? 0;
         const spd = entry.metadata?.max_speed_kmh ?? 0;
+        const gain = entry.metadata?.elevation_gain_m ?? 0;
+        const loss = entry.metadata?.elevation_loss_m ?? 0;
 
         totalDist += dist;
         totalDurationSec += dur;
         if (spd > maxSpeed) maxSpeed = spd;
+        totalElevationGain += gain;
+        totalElevationLoss += loss;
       });
 
       const totalHours = totalDurationSec / 3600;
@@ -176,6 +182,8 @@ export function calculateYearSummary(
         totalDurationMinutes: Math.round(totalDurationSec / 60),
         maxSpeedKmh: maxSpeed,
         avgSpeedKmh: overallAvgSpeed,
+        totalElevationGainM: Math.round(totalElevationGain),
+        totalElevationLossM: Math.round(totalElevationLoss),
       };
     }
 
