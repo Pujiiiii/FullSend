@@ -52,7 +52,7 @@ export const RouteMapModal: React.FC<RouteMapModalProps> = ({
     return `${m}m ${s}s`;
   };
 
-  // Generate self-contained HTML for Leaflet + Elevation Profile
+  // Generate self-contained HTML for MapLibre 3D Terrain + Elevation Profile
   const generateMapHtml = () => {
     const safeCoords = JSON.stringify(
       coordinates.map((p) => ({
@@ -73,8 +73,8 @@ export const RouteMapModal: React.FC<RouteMapModalProps> = ({
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body {
@@ -85,38 +85,25 @@ export const RouteMapModal: React.FC<RouteMapModalProps> = ({
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       user-select: none;
     }
-    #viewport-container {
-      width: 100%;
-      height: 100%;
-      position: relative;
-      overflow: hidden;
-      perspective: 900px;
-    }
     #map {
       width: 100%;
       height: 100%;
-      transition: transform 0.5s cubic-bezier(0.16, 1, 0.3, 1);
-      transform-origin: center 80%;
-    }
-    .tilt-3d {
-      transform: rotateX(32deg) scale(1.12);
-    }
-    /* Snow mountain theme tile styling: enhances white snow slopes and contrast */
-    .snow-mountain-layer {
-      filter: brightness(1.2) contrast(1.15) saturate(0.2) hue-rotate(185deg);
+      position: absolute;
+      top: 0;
+      left: 0;
     }
     /* Floating HUD controls on top right */
     .hud-controls {
       position: absolute;
       top: 14px;
       right: 14px;
-      z-index: 1000;
+      z-index: 100;
       display: flex;
       flex-direction: column;
       gap: 8px;
     }
     .hud-btn {
-      background: rgba(15, 23, 42, 0.88);
+      background: rgba(15, 23, 42, 0.9);
       backdrop-filter: blur(10px);
       -webkit-backdrop-filter: blur(10px);
       border: 1px solid rgba(255, 255, 255, 0.18);
@@ -133,7 +120,7 @@ export const RouteMapModal: React.FC<RouteMapModalProps> = ({
     }
     .hud-btn.active {
       border-color: #6366F1;
-      background: rgba(99, 102, 241, 0.45);
+      background: rgba(99, 102, 241, 0.5);
       color: #FFFFFF;
     }
     /* Custom Pin Badges */
@@ -157,13 +144,13 @@ export const RouteMapModal: React.FC<RouteMapModalProps> = ({
       bottom: 12px;
       left: 12px;
       right: 12px;
-      background: rgba(15, 23, 42, 0.92);
+      background: rgba(15, 23, 42, 0.94);
       backdrop-filter: blur(12px);
       -webkit-backdrop-filter: blur(12px);
       border: 1px solid rgba(255, 255, 255, 0.14);
       border-radius: 16px;
       padding: 10px 14px;
-      z-index: 1000;
+      z-index: 100;
       box-shadow: 0 6px 20px rgba(0,0,0,0.6);
     }
     .chart-header {
@@ -190,156 +177,247 @@ export const RouteMapModal: React.FC<RouteMapModalProps> = ({
       display: block;
       cursor: crosshair;
     }
+    .maplibregl-ctrl-bottom-left, .maplibregl-ctrl-bottom-right {
+      display: none !important;
+    }
   </style>
 </head>
 <body>
-  <div id="viewport-container">
-    <div id="map"></div>
+  <div id="map"></div>
 
-    <!-- Floating HUD controls -->
-    <div class="hud-controls">
-      <button id="tiltBtn" class="hud-btn" onclick="toggle3D()">
-        <span id="tiltIcon">🏔️</span> <span id="tiltText">Perspectiva 3D</span>
-      </button>
-      <button id="themeBtn" class="hud-btn" onclick="cycleTheme()">
-        <span id="themeIcon">🎨</span> <span id="themeText">Canviar estil</span>
-      </button>
-      <button class="hud-btn" onclick="fitRouteBounds()">
-        <span>🎯</span> <span>Centrar</span>
-      </button>
-    </div>
+  <!-- Floating HUD controls -->
+  <div class="hud-controls">
+    <button id="tiltBtn" class="hud-btn active" onclick="toggle3D()">
+      <span id="tiltIcon">🏔️</span> <span id="tiltText">Relleu 3D</span>
+    </button>
+    <button id="rotateBtn" class="hud-btn" onclick="rotateCamera()">
+      <span>🔄</span> <span>Girar 3D</span>
+    </button>
+    <button id="themeBtn" class="hud-btn" onclick="cycleTheme()">
+      <span id="themeIcon">🌙</span> <span id="themeText">Carretera Dark</span>
+    </button>
+    <button class="hud-btn" onclick="fitRouteBounds()">
+      <span>🎯</span> <span>Centrar</span>
+    </button>
+  </div>
 
-    <!-- Elevation Profile Canvas -->
-    <div id="chart-container" style="display: none;">
-      <div class="chart-header">
-        <span class="chart-title">📈 Perfil Altimètric (Altitud vs Distància)</span>
-        <span id="curElevationText" class="chart-cur-info">Toca el gràfic per explorar</span>
-      </div>
-      <canvas id="elevationCanvas" width="600" height="130"></canvas>
+  <!-- Elevation Profile Canvas -->
+  <div id="chart-container" style="display: none;">
+    <div class="chart-header">
+      <span class="chart-title">📈 Perfil Altimètric (Altitud vs Distància)</span>
+      <span id="curElevationText" class="chart-cur-info">Toca el gràfic per explorar</span>
     </div>
+    <canvas id="elevationCanvas" width="600" height="130"></canvas>
   </div>
 
   <script>
     var coords = ${safeCoords};
     var currentTheme = '${safeTheme}';
-    var is3D = false;
+    var is3D = true;
     var map;
-    var currentTileLayer;
     var cursorMarker = null;
 
-    // Tile Layer URL Providers
-    var tileProviders = {
-      dark_road: {
-        url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-        options: {
-          maxZoom: 19,
-          subdomains: 'abcd',
-          attribution: '&copy; OpenStreetMap &copy; CARTO'
-        },
-        className: ''
-      },
-      snow_mountain: {
-        url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
-        options: {
-          maxZoom: 17,
-          attribution: '&copy; OpenStreetMap &copy; OpenTopoMap'
-        },
-        className: 'snow-mountain-layer'
-      },
-      satellite: {
-        url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-        options: {
-          maxZoom: 19,
-          attribution: '&copy; Esri &copy; Earthstar Geographics'
-        },
-        className: ''
-      }
+    var defaultCenter = coords.length > 0 ? [coords[0].lng, coords[0].lat] : [1.5, 42.0];
+    var defaultZoom = coords.length > 0 ? 13 : 9;
+
+    var themeLayers = {
+      dark_road: ['layer-dark-base', 'layer-dark-ref'],
+      snow_mountain: ['layer-snow', 'layer-dark-ref'],
+      satellite: ['layer-satellite'],
+      osm_streets: ['layer-osm']
     };
 
     function initMap() {
-      var defaultCenter = coords.length > 0 ? [coords[0].lat, coords[0].lng] : [42.0, 1.5];
-      var defaultZoom = coords.length > 0 ? 14 : 9;
+      map = new maplibregl.Map({
+        container: 'map',
+        style: {
+          version: 8,
+          sources: {
+            // Free AWS Open Data Terrarium 3D Elevation Mesh (Zero API Keys)
+            'terrainSource': {
+              type: 'raster-dem',
+              tiles: ['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'],
+              encoding: 'terrarium',
+              tileSize: 256,
+              maxzoom: 15
+            },
+            // Esri Dark Gray Base (Free & No API Key)
+            'source-dark-base': {
+              type: 'raster',
+              tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}'],
+              tileSize: 256,
+              maxzoom: 18,
+              attribution: '&copy; Esri &copy; OpenStreetMap'
+            },
+            // Esri Dark Gray Reference labels
+            'source-dark-ref': {
+              type: 'raster',
+              tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}'],
+              tileSize: 256,
+              maxzoom: 18
+            },
+            // Esri World Topo for Alpine & Snowy mountains
+            'source-snow': {
+              type: 'raster',
+              tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}'],
+              tileSize: 256,
+              maxzoom: 18,
+              attribution: '&copy; Esri World Topo'
+            },
+            // Esri World Imagery (Satellite 3D)
+            'source-satellite': {
+              type: 'raster',
+              tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
+              tileSize: 256,
+              maxzoom: 19,
+              attribution: '&copy; Esri Earthstar Geographics'
+            },
+            // OpenStreetMap streets
+            'source-osm': {
+              type: 'raster',
+              tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+              tileSize: 256,
+              maxzoom: 19,
+              attribution: '&copy; OpenStreetMap'
+            }
+          },
+          layers: [
+            {
+              id: 'layer-dark-base',
+              type: 'raster',
+              source: 'source-dark-base',
+              layout: { visibility: currentTheme === 'dark_road' ? 'visible' : 'none' }
+            },
+            {
+              id: 'layer-snow',
+              type: 'raster',
+              source: 'source-snow',
+              layout: { visibility: currentTheme === 'snow_mountain' ? 'visible' : 'none' },
+              paint: {
+                'raster-saturation': -0.7,
+                'raster-contrast': 0.25,
+                'raster-brightness-max': 1.15
+              }
+            },
+            {
+              id: 'layer-satellite',
+              type: 'raster',
+              source: 'source-satellite',
+              layout: { visibility: currentTheme === 'satellite' ? 'visible' : 'none' }
+            },
+            {
+              id: 'layer-osm',
+              type: 'raster',
+              source: 'source-osm',
+              layout: { visibility: currentTheme === 'osm_streets' ? 'visible' : 'none' }
+            },
+            {
+              id: 'layer-dark-ref',
+              type: 'raster',
+              source: 'source-dark-ref',
+              layout: { visibility: (currentTheme === 'dark_road' || currentTheme === 'snow_mountain') ? 'visible' : 'none' }
+            }
+          ],
+          terrain: {
+            source: 'terrainSource',
+            exaggeration: 1.55
+          },
+          sky: {
+            'sky-color': '#0B1120',
+            'sky-horizon-blend': 0.5,
+            'horizon-color': '#1E293B',
+            'fog-color': '#0F172A'
+          }
+        },
+        center: defaultCenter,
+        zoom: defaultZoom,
+        pitch: 58,
+        bearing: 25,
+        maxPitch: 85
+      });
 
-      map = L.map('map', {
-        zoomControl: false,
-        attributionControl: false
-      }).setView(defaultCenter, defaultZoom);
+      // Enable touch pitch and rotate
+      map.touchPitch.enable();
+      map.touchZoomRotate.enable();
 
-      applyTileLayer(currentTheme);
+      map.on('load', function() {
+        updateThemeButton(currentTheme);
 
-      if (coords.length > 1) {
-        drawRoute();
-        initElevationProfile();
-      }
+        if (coords.length > 1) {
+          drawRouteAndMarkers();
+          initElevationProfile();
+          fitRouteBounds();
+        }
+      });
     }
 
-    function applyTileLayer(themeKey) {
-      if (currentTileLayer) {
-        map.removeLayer(currentTileLayer);
-      }
-      var provider = tileProviders[themeKey] || tileProviders.dark_road;
-      currentTileLayer = L.tileLayer(provider.url, {
-        ...provider.options,
-        className: provider.className
-      }).addTo(map);
+    function drawRouteAndMarkers() {
+      var lineCoords = coords.map(function(p) { return [p.lng, p.lat]; });
 
-      // Update button visual
-      var themeBtn = document.getElementById('themeBtn');
-      if (themeKey === 'snow_mountain') {
-        themeBtn.innerHTML = '<span>❄️</span> <span>Muntanya Neu</span>';
-      } else if (themeKey === 'satellite') {
-        themeBtn.innerHTML = '<span>🛰️</span> <span>Satèl·lit</span>';
-      } else {
-        themeBtn.innerHTML = '<span>🌙</span> <span>Carretera Dark</span>';
-      }
-    }
+      map.addSource('route-source', {
+        type: 'geojson',
+        data: {
+          type: 'Feature',
+          properties: {},
+          geometry: {
+            type: 'LineString',
+            coordinates: lineCoords
+          }
+        }
+      });
 
-    function drawRoute() {
-      var latLngs = coords.map(function(p) { return [p.lat, p.lng]; });
-
-      // Glowing outer shadow polyline
       var glowColor = currentTheme === 'snow_mountain' ? '#0284C7' : '${safeColor}';
-      L.polyline(latLngs, {
-        color: glowColor,
-        weight: 8,
-        opacity: 0.35,
-        lineCap: 'round',
-        lineJoin: 'round'
-      }).addTo(map);
-
-      // Core crisp polyline
       var coreColor = currentTheme === 'snow_mountain' ? '#38BDF8' : '#60A5FA';
-      var routeLine = L.polyline(latLngs, {
-        color: coreColor,
-        weight: 4,
-        opacity: 1,
-        lineCap: 'round',
-        lineJoin: 'round'
-      }).addTo(map);
 
-      // Fit map bounds
-      map.fitBounds(routeLine.getBounds(), { padding: [50, 50] });
+      // Outer glow line
+      map.addLayer({
+        id: 'route-glow',
+        type: 'line',
+        source: 'route-source',
+        layout: {
+          'line-join': 'round',
+          'line-cap': 'round'
+        },
+        paint: {
+          'line-color': glowColor,
+          'line-width': 10,
+          'line-opacity': 0.45,
+          'line-blur': 3
+        }
+      });
+
+      // Crisp core line
+      map.addLayer({
+        id: 'route-core',
+        type: 'line',
+        source: 'route-source',
+        layout: {
+          'line-join': 'round',
+          'line-cap': 'round'
+        },
+        paint: {
+          'line-color': coreColor,
+          'line-width': 4.5,
+          'line-opacity': 1.0
+        }
+      });
 
       // Start pin (🟢)
-      var startIcon = L.divIcon({
-        className: 'custom-pin',
-        html: '<div class="pin-badge pin-start">🏁</div>',
-        iconSize: [32, 32],
-        iconAnchor: [16, 16]
-      });
-      L.marker(latLngs[0], { icon: startIcon })
-        .bindPopup('<b>🟢 Inici del trajecte</b>')
+      var startEl = document.createElement('div');
+      startEl.className = 'pin-badge pin-start';
+      startEl.innerHTML = '🟢';
+      new maplibregl.Marker({ element: startEl })
+        .setLngLat([coords[0].lng, coords[0].lat])
+        .setPopup(new maplibregl.Popup({ offset: 25 }).setHTML('<b>🟢 Inici del trajecte</b>'))
         .addTo(map);
 
       // End pin (🏁)
-      var endIcon = L.divIcon({
-        className: 'custom-pin',
-        html: '<div class="pin-badge pin-end">🏁</div>',
-        iconSize: [32, 32],
-        iconAnchor: [16, 16]
-      });
-      L.marker(latLngs[latLngs.length - 1], { icon: endIcon })
-        .bindPopup('<b>🏁 Final del trajecte</b>')
+      var endEl = document.createElement('div');
+      endEl.className = 'pin-badge pin-end';
+      endEl.innerHTML = '🏁';
+      new maplibregl.Marker({ element: endEl })
+        .setLngLat([coords[coords.length - 1].lng, coords[coords.length - 1].lat])
+        .setPopup(new maplibregl.Popup({ offset: 25 }).setHTML('<b>🏁 Final del trajecte</b>'))
         .addTo(map);
 
       // Peak altitude pin (⛰️)
@@ -353,60 +431,103 @@ export const RouteMapModal: React.FC<RouteMapModalProps> = ({
       });
 
       if (peakIdx > 0 && maxAlt > 0) {
-        var peakIcon = L.divIcon({
-          className: 'custom-pin',
-          html: '<div class="pin-badge pin-peak">⛰️</div>',
-          iconSize: [30, 30],
-          iconAnchor: [15, 15]
-        });
-        L.marker([coords[peakIdx].lat, coords[peakIdx].lng], { icon: peakIcon })
-          .bindPopup('<b>⛰️ Cota Màxima:</b> ' + Math.round(maxAlt) + ' m')
+        var peakEl = document.createElement('div');
+        peakEl.className = 'pin-badge pin-peak';
+        peakEl.innerHTML = '⛰️';
+        new maplibregl.Marker({ element: peakEl })
+          .setLngLat([coords[peakIdx].lng, coords[peakIdx].lat])
+          .setPopup(new maplibregl.Popup({ offset: 25 }).setHTML('<b>⛰️ Cota Màxima:</b> ' + Math.round(maxAlt) + ' m'))
           .addTo(map);
       }
     }
 
     function fitRouteBounds() {
       if (coords.length > 1) {
-        var latLngs = coords.map(function(p) { return [p.lat, p.lng]; });
-        var bounds = L.latLngBounds(latLngs);
-        map.fitBounds(bounds, { padding: [60, 60] });
+        var bounds = new maplibregl.LngLatBounds();
+        coords.forEach(function(p) { bounds.extend([p.lng, p.lat]); });
+        map.fitBounds(bounds, {
+          padding: { top: 70, bottom: 120, left: 40, right: 40 },
+          pitch: is3D ? 58 : 0,
+          bearing: is3D ? 25 : 0,
+          maxZoom: 16,
+          duration: 900
+        });
       }
     }
 
     function toggle3D() {
       is3D = !is3D;
-      var mapEl = document.getElementById('map');
       var tiltBtn = document.getElementById('tiltBtn');
       if (is3D) {
-        mapEl.classList.add('tilt-3d');
+        map.setTerrain({ source: 'terrainSource', exaggeration: 1.55 });
+        map.easeTo({ pitch: 58, bearing: 25, duration: 800 });
         tiltBtn.classList.add('active');
+        document.getElementById('tiltIcon').innerText = '🏔️';
+        document.getElementById('tiltText').innerText = 'Relleu 3D';
+      } else {
+        map.setTerrain(null);
+        map.easeTo({ pitch: 0, bearing: 0, duration: 800 });
+        tiltBtn.classList.remove('active');
         document.getElementById('tiltIcon').innerText = '🗺️';
         document.getElementById('tiltText').innerText = 'Vista 2D';
-      } else {
-        mapEl.classList.remove('tilt-3d');
-        tiltBtn.classList.remove('active');
-        document.getElementById('tiltIcon').innerText = '🏔️';
-        document.getElementById('tiltText').innerText = 'Perspectiva 3D';
       }
-      setTimeout(function() { map.invalidateSize(); }, 350);
+    }
+
+    function rotateCamera() {
+      var curBearing = map.getBearing();
+      map.easeTo({ bearing: (curBearing + 60) % 360, duration: 800 });
     }
 
     function cycleTheme() {
-      if (currentTheme === 'dark_road') {
-        currentTheme = 'snow_mountain';
-      } else if (currentTheme === 'snow_mountain') {
-        currentTheme = 'satellite';
-      } else {
-        currentTheme = 'dark_road';
+      var order = ['dark_road', 'snow_mountain', 'satellite', 'osm_streets'];
+      var nextIdx = (order.indexOf(currentTheme) + 1) % order.length;
+      currentTheme = order[nextIdx];
+      applyTheme(currentTheme);
+    }
+
+    function applyTheme(themeKey) {
+      var allLayers = ['layer-dark-base', 'layer-snow', 'layer-satellite', 'layer-osm', 'layer-dark-ref'];
+      allLayers.forEach(function(layerId) {
+        if (map.getLayer(layerId)) {
+          map.setLayoutProperty(layerId, 'visibility', 'none');
+        }
+      });
+
+      var activeList = themeLayers[themeKey] || themeLayers.dark_road;
+      activeList.forEach(function(layerId) {
+        if (map.getLayer(layerId)) {
+          map.setLayoutProperty(layerId, 'visibility', 'visible');
+        }
+      });
+
+      if (map.getLayer('route-glow') && map.getLayer('route-core')) {
+        var glow = themeKey === 'snow_mountain' ? '#0284C7' : '${safeColor}';
+        var core = themeKey === 'snow_mountain' ? '#38BDF8' : '#60A5FA';
+        map.setPaintProperty('route-glow', 'line-color', glow);
+        map.setPaintProperty('route-core', 'line-color', core);
       }
-      applyTileLayer(currentTheme);
+
+      updateThemeButton(themeKey);
+    }
+
+    function updateThemeButton(themeKey) {
+      var themeBtn = document.getElementById('themeBtn');
+      if (themeKey === 'snow_mountain') {
+        themeBtn.innerHTML = '<span>❄️</span> <span>Muntanya Neu</span>';
+      } else if (themeKey === 'satellite') {
+        themeBtn.innerHTML = '<span>🛰️</span> <span>Satèl·lit 3D</span>';
+      } else if (themeKey === 'osm_streets') {
+        themeBtn.innerHTML = '<span>🗺️</span> <span>Carrer 3D</span>';
+      } else {
+        themeBtn.innerHTML = '<span>🌙</span> <span>Carretera Dark</span>';
+      }
     }
 
     // Interactive Elevation Profile Chart
     function initElevationProfile() {
       var altitudes = coords.map(function(c) { return c.alt || 0; });
       var validAlts = altitudes.filter(function(a) { return a > 0; });
-      if (validAlts.length < 5) return; // not enough altitude data
+      if (validAlts.length < 5) return;
 
       var chartContainer = document.getElementById('chart-container');
       chartContainer.style.display = 'block';
@@ -420,10 +541,13 @@ export const RouteMapModal: React.FC<RouteMapModalProps> = ({
       var maxA = Math.max(...validAlts) + 20;
       var rangeA = Math.max(1, maxA - minA);
 
+      var cursorEl = document.createElement('div');
+      cursorEl.innerHTML = '<div style="width:16px;height:16px;border-radius:50%;background:#F43F5E;border:2.5px solid #fff;box-shadow:0 0 12px #F43F5E;"></div>';
+      cursorMarker = new maplibregl.Marker({ element: cursorEl });
+
       function drawProfile(highlightIdx) {
         ctx.clearRect(0, 0, W, H);
 
-        // Gradient under altitude curve
         var grad = ctx.createLinearGradient(0, 0, 0, H);
         if (currentTheme === 'snow_mountain') {
           grad.addColorStop(0, 'rgba(56, 189, 248, 0.6)');
@@ -442,14 +566,12 @@ export const RouteMapModal: React.FC<RouteMapModalProps> = ({
           else ctx.lineTo(x, y);
         });
 
-        // Close path for area gradient fill
         ctx.lineTo(W, H);
         ctx.lineTo(0, H);
         ctx.closePath();
         ctx.fillStyle = grad;
         ctx.fill();
 
-        // Stroke line
         ctx.beginPath();
         coords.forEach(function(p, i) {
           var x = (i / (coords.length - 1)) * W;
@@ -462,13 +584,11 @@ export const RouteMapModal: React.FC<RouteMapModalProps> = ({
         ctx.lineWidth = 2.5;
         ctx.stroke();
 
-        // Highlight active point if tapped/hovered
         if (highlightIdx !== undefined && highlightIdx >= 0 && highlightIdx < coords.length) {
           var hx = (highlightIdx / (coords.length - 1)) * W;
           var hAlt = coords[highlightIdx].alt || minA;
           var hy = H - ((hAlt - minA) / rangeA) * (H - 24) - 12;
 
-          // Vertical guideline
           ctx.beginPath();
           ctx.moveTo(hx, 0);
           ctx.lineTo(hx, H);
@@ -476,7 +596,6 @@ export const RouteMapModal: React.FC<RouteMapModalProps> = ({
           ctx.lineWidth = 1.5;
           ctx.stroke();
 
-          // Dot
           ctx.beginPath();
           ctx.arc(hx, hy, 5, 0, 2 * Math.PI);
           ctx.fillStyle = '#FFFFFF';
@@ -489,7 +608,6 @@ export const RouteMapModal: React.FC<RouteMapModalProps> = ({
 
       drawProfile();
 
-      // Touch / mouse scrub interaction on elevation canvas
       function handleScrub(e) {
         var rect = canvas.getBoundingClientRect();
         var clientX = e.touches ? e.touches[0].clientX : e.clientX;
@@ -500,23 +618,12 @@ export const RouteMapModal: React.FC<RouteMapModalProps> = ({
         if (targetPoint) {
           drawProfile(idx);
 
-          // Update label
           var spdText = targetPoint.spd ? ' • ' + Math.round(targetPoint.spd) + ' km/h' : '';
           var altText = targetPoint.alt ? Math.round(targetPoint.alt) + ' m' : '--';
           document.getElementById('curElevationText').innerText = '📍 Alt: ' + altText + spdText;
 
-          // Move cursor marker on map
-          if (!cursorMarker) {
-            var pulseIcon = L.divIcon({
-              className: 'pulse-icon',
-              html: '<div style="width:16px;height:16px;border-radius:50%;background:#F43F5E;border:2px solid #fff;box-shadow:0 0 10px #F43F5E;"></div>',
-              iconSize: [16, 16],
-              iconAnchor: [8, 8]
-            });
-            cursorMarker = L.marker([targetPoint.lat, targetPoint.lng], { icon: pulseIcon }).addTo(map);
-          } else {
-            cursorMarker.setLatLng([targetPoint.lat, targetPoint.lng]);
-          }
+          cursorMarker.setLngLat([targetPoint.lng, targetPoint.lat]).addTo(map);
+          map.easeTo({ center: [targetPoint.lng, targetPoint.lat], duration: 250 });
         }
       }
 
@@ -562,8 +669,8 @@ export const RouteMapModal: React.FC<RouteMapModalProps> = ({
                 </Text>
                 <Text style={styles.headerSubtitle}>
                   {activeTheme === 'snow_mountain'
-                    ? 'Estil Neu i Relleu Alpí'
-                    : 'Estil Carretera Dark'}
+                    ? 'Relleu 3D Neu i Muntanya'
+                    : 'Relleu 3D Carretera Dark'}
                 </Text>
               </View>
             </View>
@@ -625,7 +732,7 @@ export const RouteMapModal: React.FC<RouteMapModalProps> = ({
             )}
           </View>
 
-          {/* Interactive Map WebView */}
+          {/* Interactive 3D Terrain Map WebView */}
           <View style={styles.mapContainer}>
             {coordinates.length > 0 ? (
               <WebView

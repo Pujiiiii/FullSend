@@ -184,8 +184,9 @@ export default function SettingsScreen() {
 
       {/* App Info */}
       <View style={styles.footer}>
-        <Text style={styles.appName}>StatsTracker</Text>
-        <Text style={styles.appSub}>Versió 1.0.0 • React Native & Supabase</Text>
+        <Text style={styles.appName}>FULL SEND ⚡</Text>
+        <Text style={styles.appTagline}>TRACK EVERYTHING. DRIVE. RIDE. SKI. EXPLORE.</Text>
+        <Text style={styles.appSub}>Versió 2.0.0 • High Energy Telemetry</Text>
       </View>
     </ScrollView>
   );
@@ -331,14 +332,22 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   appName: {
-    fontSize: 14,
+    fontSize: 16,
+    fontWeight: '900',
+    color: Colors.primary,
+    letterSpacing: 1,
+  },
+  appTagline: {
+    fontSize: 10,
     fontWeight: '800',
-    color: Colors.textMuted,
+    color: Colors.textSecondary,
+    marginTop: 4,
+    letterSpacing: 0.5,
   },
   appSub: {
     fontSize: 11,
     color: Colors.textMuted,
-    marginTop: 2,
+    marginTop: 4,
   },
 });
 

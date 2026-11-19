@@ -1,19 +1,19 @@
 {
   "expo": {
-    "name": "StatsTracker",
-    "slug": "StatsTracker",
-    "scheme": "statstracker",
+    "name": "Full Send",
+    "slug": "full-send",
+    "scheme": "fullsend",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "dark",
     "ios": {
       "supportsTablet": true
     },
     "android": {
-      "package": "com.pujiiiii.statstracker",
+      "package": "com.pujiiiii.fullsend",
       "adaptiveIcon": {
-        "backgroundColor": "#0F172A",
+        "backgroundColor": "#090D16",
         "foregroundImage": "./assets/icon.png"
       },
       "predictiveBackGestureEnabled": false,
@@ -37,7 +37,7 @@
       [
         "expo-location",
         {
-          "locationAlwaysAndWhenInUsePermission": "StatsTracker necessita accés a la ubicació per gravar rutes en vehicle.",
+          "locationAlwaysAndWhenInUsePermission": "Full Send necessita accés a la ubicació per gravar rutes i telemetria en directe.",
           "isAndroidBackgroundLocationEnabled": true,
           "isAndroidForegroundServiceEnabled": true
         }
