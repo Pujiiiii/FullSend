@@ -134,8 +134,14 @@ export function calculateYearSummary(
         let sum = 0;
         let count = 0;
         statEntriesThisYear.forEach((entry) => {
-          const val = entry.metadata?.[field.id];
-          if (typeof val === 'number') {
+          const raw = entry.metadata?.[field.id];
+          const val =
+            typeof raw === 'number'
+              ? raw
+              : raw !== undefined && raw !== null && raw !== ''
+              ? parseFloat(String(raw).replace(',', '.'))
+              : NaN;
+          if (!isNaN(val)) {
             sum += val;
             count += 1;
           }

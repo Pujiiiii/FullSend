@@ -54,7 +54,28 @@ export const StatCard: React.FC<StatCardProps> = ({ stat, onQuickLog }) => {
       if (isNaN(val)) val = 1;
     }
 
-    onQuickLog(val, inputNote || undefined, Object.keys(customFieldValues).length > 0 ? customFieldValues : undefined);
+    const parsedMetadata: Record<string, any> = {};
+    if (stat.fields_config) {
+      stat.fields_config.forEach((f) => {
+        const raw = customFieldValues[f.id];
+        if (raw !== undefined && raw !== null && raw !== '') {
+          if (f.type === 'number') {
+            const num = typeof raw === 'number' ? raw : parseFloat(String(raw).replace(',', '.'));
+            if (!isNaN(num)) parsedMetadata[f.id] = num;
+          } else {
+            parsedMetadata[f.id] = raw;
+          }
+        }
+      });
+    } else {
+      Object.assign(parsedMetadata, customFieldValues);
+    }
+
+    onQuickLog(
+      val,
+      inputNote || undefined,
+      Object.keys(parsedMetadata).length > 0 ? parsedMetadata : undefined
+    );
     setInputValue('');
     setInputNote('');
     setCustomFieldValues({});

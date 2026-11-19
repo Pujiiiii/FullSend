@@ -76,6 +76,11 @@ export const CustomFieldsInput: React.FC<CustomFieldsInputProps> = ({
         }
 
         if (field.type === 'number') {
+          const rawValue =
+            values[field.id] !== undefined && values[field.id] !== null
+              ? String(values[field.id])
+              : '';
+
           return (
             <View key={field.id} style={styles.fieldBlock}>
               <Text style={styles.fieldLabel}>
@@ -83,13 +88,14 @@ export const CustomFieldsInput: React.FC<CustomFieldsInputProps> = ({
               </Text>
               <TextInput
                 style={styles.numericInput}
-                placeholder={`Introdueix ${field.label.toLowerCase()}...`}
+                placeholder={`Introdueix ${field.label.toLowerCase()}... (ex: 1.48)`}
                 placeholderTextColor={Colors.textMuted}
                 keyboardType="decimal-pad"
-                value={values[field.id] !== undefined ? String(values[field.id]) : ''}
+                value={rawValue}
                 onChangeText={(val) => {
-                  const num = parseFloat(val.replace(',', '.'));
-                  handleUpdate(field.id, isNaN(num) ? undefined : num);
+                  // Allow digits and decimal separator (. or ,) without stripping them during typing
+                  const sanitized = val.replace(/[^0-9.,-]/g, '');
+                  handleUpdate(field.id, sanitized);
                 }}
               />
             </View>

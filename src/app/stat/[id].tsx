@@ -72,7 +72,23 @@ export default function StatDetailScreen() {
 
     try {
       setAdding(true);
-      let finalMetadata: Record<string, any> = { ...customFieldValues };
+      let finalMetadata: Record<string, any> = {};
+      if (stat.fields_config) {
+        stat.fields_config.forEach((f) => {
+          const raw = customFieldValues[f.id];
+          if (raw !== undefined && raw !== null && raw !== '') {
+            if (f.type === 'number') {
+              const num = typeof raw === 'number' ? raw : parseFloat(String(raw).replace(',', '.'));
+              if (!isNaN(num)) finalMetadata[f.id] = num;
+            } else {
+              finalMetadata[f.id] = raw;
+            }
+          }
+        });
+      } else {
+        Object.assign(finalMetadata, customFieldValues);
+      }
+
       if (stat.type === 'route') {
         const durMin = parseFloat(routeDurationMin.replace(',', '.'));
         const maxSpd = parseFloat(routeMaxSpeed.replace(',', '.'));
@@ -355,14 +371,31 @@ export default function StatDetailScreen() {
                   </View>
                 )}
 
-                {/* Fuel secondary data */}
-                {(pricePerLitre !== undefined || totalCost !== undefined) && (
-                  <Text style={styles.extraMetadataText}>
-                    ⛽ {pricePerLitre ? `${pricePerLitre} €/L` : ''}
-                    {pricePerLitre && totalCost ? ' • ' : ''}
-                    {totalCost ? `Cost: ${totalCost} €` : ''}
-                  </Text>
-                )}
+                {/* Dynamic secondary fields from fields_config */}
+                {stat.fields_config &&
+                  stat.fields_config
+                    .filter((f) => f.type === 'number')
+                    .map((f) => {
+                      const val = item.metadata?.[f.id];
+                      if (val === undefined || val === null || val === '') return null;
+                      return (
+                        <Text key={f.id} style={styles.extraMetadataText}>
+                          📌 {f.label}: {val} {f.unit || ''}
+                        </Text>
+                      );
+                    })}
+
+                {/* Legacy fuel secondary data fallback */}
+                {(pricePerLitre !== undefined || totalCost !== undefined) &&
+                  !stat.fields_config?.some(
+                    (f) => f.id === 'price_per_litre' || f.id === 'total_cost'
+                  ) && (
+                    <Text style={styles.extraMetadataText}>
+                      ⛽ {pricePerLitre ? `${pricePerLitre} €/L` : ''}
+                      {pricePerLitre && totalCost ? ' • ' : ''}
+                      {totalCost ? `Cost: ${totalCost} €` : ''}
+                    </Text>
+                  )}
 
                 {/* Route GPS secondary data */}
                 {(maxSpeed !== undefined || item.metadata?.elevation_gain_m !== undefined) && (
