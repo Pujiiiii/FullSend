@@ -296,7 +296,8 @@ export default function FullSendLiveScreen() {
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
-  // Pokémon GO Style 3D Perspective Map HTML (Leaflet 1.9.4, 100% Android WebView compatible)
+  // Full Send Pokémon GO Style 3D Terrain Map Engine (MapLibre GL 3.6.2 + OpenFreeMap + AWS Terrarium DEM)
+  // 100% Free, zero tokens, zero credit cards, real 3D mountain relief, minimalist visual style
   const mapHtmlSource = useMemo(() => {
     const html = `
 <!DOCTYPE html>
@@ -304,55 +305,27 @@ export default function FullSendLiveScreen() {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@3.6.2/dist/maplibre-gl.css" />
+  <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body {
       width: 100%;
       height: 100%;
-      background: #090D16;
+      background: #96D48F;
       overflow: hidden;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       user-select: none;
       -webkit-user-select: none;
     }
-    #viewport-container {
-      width: 100%;
-      height: 100%;
-      position: absolute;
-      top: 0;
-      left: 0;
-      overflow: hidden;
-      perspective: 750px;
-      perspective-origin: 50% 65%;
-      background: #090D16;
-    }
     #map {
       width: 100%;
-      height: 125%;
-      position: absolute;
-      top: -12%;
-      left: 0;
-      transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
-      transform-origin: 50% 65%;
-      transform: rotateX(40deg) scale(1.15);
-      background: #090D16;
-    }
-    #viewport-container.mode-2d #map {
-      transform: rotateX(0deg) scale(1);
       height: 100%;
+      position: absolute;
       top: 0;
+      left: 0;
     }
-    /* Dark Road Theme (OSM tiles inverted to sleek Midnight Dark) */
-    .osm-dark-tiles {
-      filter: invert(92%) hue-rotate(180deg) brightness(85%) contrast(110%);
-    }
-    /* Alpine Snow Theme */
-    .snow-topo-tiles {
-      filter: brightness(1.1) contrast(1.1) saturate(0.25) hue-rotate(180deg);
-    }
-    /* Avatar: Clean circle standing upright in 3D (Sense cap anell brillant) */
+    /* Pokémon GO Style Avatar: Bubble standing upright in 3D terrain */
     .avatar-container {
       position: relative;
       width: 44px;
@@ -363,144 +336,287 @@ export default function FullSendLiveScreen() {
       pointer-events: none;
     }
     .avatar-bubble {
-      width: 40px;
-      height: 40px;
+      width: 42px;
+      height: 42px;
       border-radius: 50%;
-      background: #0F172A;
-      border: 2.5px solid #CCFF00;
+      background: #FFFFFF;
+      border: 3px solid #00E5FF;
       display: flex;
       align-items: center;
       justify-content: center;
-      box-shadow: 0 4px 14px rgba(0,0,0,0.85);
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
       font-size: 22px;
       z-index: 2;
-      transform: rotateX(-40deg); /* Counter-rotate so avatar stands upright */
-    }
-    #viewport-container.mode-2d .avatar-bubble {
-      transform: rotateX(0deg);
+      transform: rotateX(-58deg); /* Counter-rotate so avatar stands upright in 3D perspective! */
     }
     .avatar-pointer {
       position: absolute;
-      top: -7px;
+      top: -9px;
       width: 0;
       height: 0;
-      border-left: 6px solid transparent;
-      border-right: 6px solid transparent;
-      border-bottom: 9px solid #CCFF00;
+      border-left: 7px solid transparent;
+      border-right: 7px solid transparent;
+      border-bottom: 11px solid #00E5FF;
       z-index: 3;
-      transform-origin: 50% 28px;
+      transform-origin: 50% 30px;
     }
-    /* Hide Leaflet default attribution and controls for clean cockpit */
-    .leaflet-control-container {
+    /* Hide default attribution & controls for clean cockpit */
+    .maplibregl-ctrl-bottom-left, .maplibregl-ctrl-bottom-right {
       display: none !important;
     }
   </style>
 </head>
 <body>
-  <div id="viewport-container">
-    <div id="map"></div>
-  </div>
+  <div id="map"></div>
 
   <script>
     var map = null;
     var playerMarker = null;
-    var trailGlow = null;
-    var trailCore = null;
-    var currentTheme = 'dark_road';
+    var liveTrailCoords = [];
     var is3D = true;
     var followMode = true;
+    var currentTheme = 'pokemon_go';
     var pendingLocation = null;
 
-    // Tile Layer Definitions (100% Free, Zero API Keys, Reliable Worldwide)
-    var layers = {
-      dark_road: L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        maxZoom: 19,
-        className: 'osm-dark-tiles'
-      }),
-      snow_mountain: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}', {
-        maxZoom: 18,
-        className: 'snow-topo-tiles'
-      }),
-      satellite: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-        maxZoom: 19
-      }),
-      streets: L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        maxZoom: 19
-      })
-    };
+    // Pokémon GO Minimalist Style Specification (Zero POIs, soft green relief, clean roads)
+    function getPokemonGoStyle(theme) {
+      var isSnow = theme === 'snow_mountain';
+      var isDark = theme === 'dark_road';
+
+      var bgColor = isSnow ? '#EEF4F8' : isDark ? '#0F172A' : '#96D48F';
+      var parkColor = isSnow ? '#E2ECF2' : isDark ? '#1E293B' : '#82C87A';
+      var forestColor = isSnow ? '#D8E5ED' : isDark ? '#162235' : '#63B35C';
+      var waterColor = isSnow ? '#38BDF8' : isDark ? '#0284C7' : '#48CAE4';
+      var roadMajor = isSnow ? '#FFFFFF' : isDark ? '#334155' : '#FFFFFF';
+      var roadMinor = isSnow ? '#E2E8F0' : isDark ? '#1E293B' : '#F1F5F9';
+      var roadCasing = isSnow ? '#CBD5E1' : isDark ? '#090D16' : '#D1D5DB';
+      var skyColor = isSnow ? '#B8D8F0' : isDark ? '#090D16' : '#7EC8E3';
+      var fogColor = isSnow ? '#DCECF7' : isDark ? '#0F172A' : '#D0EAE4';
+
+      return {
+        version: 8,
+        sources: {
+          'openfreemap': {
+            type: 'vector',
+            tiles: ['https://tiles.openfreemap.org/planet/{z}/{x}/{y}.pbf'],
+            maxzoom: 14
+          },
+          'terrainSource': {
+            type: 'raster-dem',
+            tiles: ['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'],
+            encoding: 'terrarium',
+            tileSize: 256,
+            maxzoom: 15
+          },
+          'live-trail-source': {
+            type: 'geojson',
+            data: {
+              type: 'Feature',
+              geometry: {
+                type: 'LineString',
+                coordinates: []
+              }
+            }
+          }
+        },
+        terrain: {
+          source: 'terrainSource',
+          exaggeration: 1.55
+        },
+        sky: {
+          'sky-color': skyColor,
+          'sky-horizon-blend': 0.6,
+          'horizon-color': '#EBF7F5',
+          'fog-color': fogColor
+        },
+        layers: [
+          // 1. Natural Ground Terrain
+          {
+            id: 'background',
+            type: 'background',
+            paint: { 'background-color': bgColor }
+          },
+          // 2. Parks & Grass
+          {
+            id: 'layer-park',
+            type: 'fill',
+            source: 'openfreemap',
+            'source-layer': 'park',
+            paint: { 'fill-color': parkColor, 'fill-opacity': 0.85 }
+          },
+          // 3. Forests & Woods
+          {
+            id: 'layer-forest',
+            type: 'fill',
+            source: 'openfreemap',
+            'source-layer': 'landcover',
+            filter: ['==', 'subclass', 'wood'],
+            paint: { 'fill-color': forestColor, 'fill-opacity': 0.8 }
+          },
+          // 4. Water Bodies (Lakes, Seas)
+          {
+            id: 'layer-water',
+            type: 'fill',
+            source: 'openfreemap',
+            'source-layer': 'water',
+            paint: { 'fill-color': waterColor }
+          },
+          // 5. Waterways (Rivers, Streams)
+          {
+            id: 'layer-waterway',
+            type: 'line',
+            source: 'openfreemap',
+            'source-layer': 'waterway',
+            paint: { 'line-color': waterColor, 'line-width': 2.5 }
+          },
+          // 6. Major Roads Casing
+          {
+            id: 'layer-road-major-casing',
+            type: 'line',
+            source: 'openfreemap',
+            'source-layer': 'transportation',
+            filter: ['in', 'class', 'motorway', 'trunk', 'primary'],
+            paint: {
+              'line-color': roadCasing,
+              'line-width': ['interpolate', ['linear'], ['zoom'], 10, 2.5, 16, 7.5]
+            }
+          },
+          // 7. Major Roads Core
+          {
+            id: 'layer-road-major',
+            type: 'line',
+            source: 'openfreemap',
+            'source-layer': 'transportation',
+            filter: ['in', 'class', 'motorway', 'trunk', 'primary'],
+            paint: {
+              'line-color': roadMajor,
+              'line-width': ['interpolate', ['linear'], ['zoom'], 10, 1.8, 16, 6.0]
+            }
+          },
+          // 8. Secondary & Residential Streets
+          {
+            id: 'layer-road-street',
+            type: 'line',
+            source: 'openfreemap',
+            'source-layer': 'transportation',
+            filter: ['in', 'class', 'secondary', 'tertiary', 'minor', 'residential'],
+            paint: {
+              'line-color': roadMinor,
+              'line-width': ['interpolate', ['linear'], ['zoom'], 12, 1.5, 16, 4.0]
+            }
+          },
+          // 9. Paths, Tracks, Footways & Trails
+          {
+            id: 'layer-road-path',
+            type: 'line',
+            source: 'openfreemap',
+            'source-layer': 'transportation',
+            filter: ['in', 'class', 'path', 'track', 'service', 'footway', 'cycleway'],
+            paint: {
+              'line-color': roadCasing,
+              'line-dasharray': [2, 1],
+              'line-width': ['interpolate', ['linear'], ['zoom'], 12, 1.0, 16, 2.2]
+            }
+          },
+          // 10. Live Electric Blue GPS Route Trail (Outer Glow)
+          {
+            id: 'layer-trail-glow',
+            type: 'line',
+            source: 'live-trail-source',
+            layout: { 'line-join': 'round', 'line-cap': 'round' },
+            paint: {
+              'line-color': '#00B4D8',
+              'line-width': 9,
+              'line-opacity': 0.5,
+              'line-blur': 2.5
+            }
+          },
+          // 11. Live Electric Blue GPS Route Trail (Crisp Core)
+          {
+            id: 'layer-trail-core',
+            type: 'line',
+            source: 'live-trail-source',
+            layout: { 'line-join': 'round', 'line-cap': 'round' },
+            paint: {
+              'line-color': '#00E5FF',
+              'line-width': 4.5,
+              'line-opacity': 1.0
+            }
+          },
+          // 12. Minimal Road Names (Only when zoomed in, POIs and businesses 100% removed!)
+          {
+            id: 'layer-road-name',
+            type: 'symbol',
+            source: 'openfreemap',
+            'source-layer': 'transportation_name',
+            minzoom: 14,
+            layout: {
+              'symbol-placement': 'line',
+              'text-field': '{name}',
+              'text-size': 11
+            },
+            paint: {
+              'text-color': isDark ? '#94A3B8' : '#334155',
+              'text-halo-color': isDark ? '#090D16' : '#FFFFFF',
+              'text-halo-width': 1.5
+            }
+          }
+        ]
+      };
+    }
 
     function initMap() {
       if (map) return;
       try {
-        map = L.map('map', {
-          center: [41.3851, 2.1734],
-          zoom: 16,
-          zoomControl: false,
+        map = new maplibregl.Map({
+          container: 'map',
+          style: getPokemonGoStyle(currentTheme),
+          center: [2.1734, 41.3851], // Start Barcelona, flies to GPS immediately
+          zoom: 15.5,
+          pitch: 58,
+          bearing: 0,
+          maxPitch: 75,
           attributionControl: false
         });
 
-        // Add active tile theme
-        layers[currentTheme].addTo(map);
+        // Touch gestures
+        map.touchPitch.enable();
+        map.touchZoomRotate.enable();
 
-        // Glowing live route trail
-        trailGlow = L.polyline([], {
-          color: '#CCFF00',
-          weight: 8,
-          opacity: 0.45,
-          lineCap: 'round',
-          lineJoin: 'round'
-        }).addTo(map);
+        map.on('load', function() {
+          createAvatarMarker([2.1734, 41.3851]);
 
-        trailCore = L.polyline([], {
-          color: '#E2F952',
-          weight: 4,
-          opacity: 1.0,
-          lineCap: 'round',
-          lineJoin: 'round'
-        }).addTo(map);
+          if (pendingLocation) {
+            updatePlayer(pendingLocation);
+            pendingLocation = null;
+          }
 
-        createAvatarMarker([41.3851, 2.1734]);
+          notifyNative({ type: 'MAP_LOADED' });
+        });
 
         map.on('dragstart', function() {
           followMode = false;
         });
 
-        // Invalidate size to guarantee tile rendering
-        setTimeout(function() {
-          if (map) map.invalidateSize();
-        }, 150);
-        setTimeout(function() {
-          if (map) map.invalidateSize();
-        }, 600);
-
-        // If pending location was received before map ready, apply now
-        if (pendingLocation) {
-          updatePlayer(pendingLocation);
-          pendingLocation = null;
-        }
-
-        // Notify React Native that map is ready
-        sendToNative({ type: 'MAP_LOADED' });
       } catch(e) {
-        sendToNative({ type: 'MAP_ERROR', error: String(e) });
+        notifyNative({ type: 'MAP_ERROR', error: String(e) });
       }
     }
 
-    function sendToNative(data) {
+    function notifyNative(data) {
       if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
         window.ReactNativeWebView.postMessage(JSON.stringify(data));
       }
     }
 
-    function createAvatarMarker(latLng) {
-      var icon = L.divIcon({
-        className: '',
-        html: '<div class="avatar-container"><div class="avatar-pointer"></div><div class="avatar-bubble"><span id="avatarIcon">🧍</span></div></div>',
-        iconSize: [44, 44],
-        iconAnchor: [22, 22]
-      });
+    function createAvatarMarker(lngLat) {
+      var el = document.createElement('div');
+      el.className = 'avatar-container';
+      el.innerHTML = '<div class="avatar-pointer"></div><div class="avatar-bubble"><span id="avatarIcon">🧍</span></div>';
 
-      playerMarker = L.marker(latLng, { icon: icon }).addTo(map);
+      playerMarker = new maplibregl.Marker({ element: el })
+        .setLngLat(lngLat)
+        .addTo(map);
     }
 
     function updatePlayer(data) {
@@ -508,73 +624,95 @@ export default function FullSendLiveScreen() {
         pendingLocation = data;
         return;
       }
-      var latLng = [data.lat, data.lng];
+      var lngLat = [data.lng, data.lat];
 
       if (!playerMarker) {
-        createAvatarMarker(latLng);
+        createAvatarMarker(lngLat);
       } else {
-        playerMarker.setLatLng(latLng);
+        playerMarker.setLngLat(lngLat);
       }
 
-      // Rotate directional arrow pointer
-      var pointerEl = document.querySelector('.avatar-pointer');
-      if (pointerEl && data.heading !== undefined) {
-        pointerEl.style.transform = 'rotate(' + data.heading + 'deg)';
+      // Rotate directional pointer according to GPS heading
+      var pointer = document.querySelector('.avatar-pointer');
+      if (pointer && data.heading !== undefined) {
+        pointer.style.transform = 'rotate(' + data.heading + 'deg)';
       }
 
-      // Transform avatar: Person when idle, Machine when recording
+      // Switch avatar: Person when idle, Active vehicle when recording
       var iconEl = document.getElementById('avatarIcon');
       if (iconEl) {
         iconEl.innerText = data.isRecording ? (data.vehicleIcon || '🏎️') : '🧍';
       }
 
-      // Live glowing trail
+      // Live electric blue GPS trail
       if (data.isRecording) {
-        trailGlow.addLatLng(latLng);
-        trailCore.addLatLng(latLng);
+        liveTrailCoords.push(lngLat);
+        var src = map.getSource('live-trail-source');
+        if (src) {
+          src.setData({
+            type: 'Feature',
+            geometry: {
+              type: 'LineString',
+              coordinates: liveTrailCoords
+            }
+          });
+        }
       } else {
-        if (trailGlow.getLatLngs().length > 0) {
-          trailGlow.setLatLngs([]);
-          trailCore.setLatLngs([]);
+        if (liveTrailCoords.length > 0) {
+          liveTrailCoords = [];
+          var src = map.getSource('live-trail-source');
+          if (src) src.setData({ type: 'Feature', geometry: { type: 'LineString', coordinates: [] } });
         }
       }
 
-      // Follow mode camera
+      // Smooth 3D camera follow
       if (followMode) {
-        map.panTo(latLng, { animate: true, duration: 0.8 });
+        map.easeTo({
+          center: lngLat,
+          pitch: is3D ? 58 : 0,
+          bearing: data.heading || map.getBearing(),
+          zoom: 15.5,
+          duration: 900
+        });
       }
     }
 
     function recenterOnPlayer() {
       followMode = true;
       if (playerMarker && map) {
-        map.setView(playerMarker.getLatLng(), 16.5, { animate: true });
+        map.easeTo({
+          center: playerMarker.getLngLat(),
+          pitch: is3D ? 58 : 0,
+          zoom: 16,
+          duration: 700
+        });
       }
-    }
-
-    function applyTheme(themeKey) {
-      if (!map || !layers[themeKey]) return;
-      map.eachLayer(function(l) {
-        if (l === layers.dark_road || l === layers.snow_mountain || l === layers.satellite || l === layers.streets) {
-          map.removeLayer(l);
-        }
-      });
-      layers[themeKey].addTo(map);
-      currentTheme = themeKey;
     }
 
     function toggle3D(val) {
       is3D = val;
-      var vp = document.getElementById('viewport-container');
-      if (vp) {
-        vp.className = is3D ? '' : 'mode-2d';
+      if (!map) return;
+      if (is3D) {
+        try {
+          map.setTerrain({ source: 'terrainSource', exaggeration: 1.55 });
+        } catch(e) {}
+        map.easeTo({ pitch: 58, duration: 700 });
+      } else {
+        try {
+          map.setTerrain(null);
+        } catch(e) {}
+        map.easeTo({ pitch: 0, duration: 700 });
       }
-      setTimeout(function() {
-        if (map) map.invalidateSize();
-      }, 300);
     }
 
-    function handleIncomingMessage(event) {
+    function applyTheme(themeKey) {
+      currentTheme = themeKey;
+      if (map) {
+        map.setStyle(getPokemonGoStyle(themeKey));
+      }
+    }
+
+    function handleIncomingData(event) {
       var raw = event.data;
       if (!raw) return;
       try {
@@ -591,12 +729,12 @@ export default function FullSendLiveScreen() {
       } catch(e) {}
     }
 
-    window.addEventListener('message', handleIncomingMessage);
-    document.addEventListener('message', handleIncomingMessage);
+    window.addEventListener('message', handleIncomingData);
+    document.addEventListener('message', handleIncomingData);
 
-    // Infallible polling boot: runs the instant Leaflet script loads
+    // Infallible polling starter
     function boot() {
-      if (typeof L !== 'undefined' && document.getElementById('map')) {
+      if (typeof maplibregl !== 'undefined' && document.getElementById('map')) {
         initMap();
       } else {
         setTimeout(boot, 40);
@@ -616,7 +754,7 @@ export default function FullSendLiveScreen() {
       <WebView
         ref={webViewRef}
         originWhitelist={['*']}
-        source={{ html: mapHtmlSource.html, baseUrl: 'https://cdnjs.cloudflare.com' }}
+        source={{ html: mapHtmlSource.html, baseUrl: 'https://tiles.openfreemap.org' }}
         style={styles.webView}
         javaScriptEnabled={true}
         domStorageEnabled={true}
