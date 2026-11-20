@@ -1,59 +1,78 @@
-# 📊 StatsTracker
+# ⚡ Full Send
 
-Aplicació mòbil (React Native amb Expo i Supabase) per fer seguiment de qualsevol mètrica personal durant l'any natural, amb un **Recap anual** a l'estil "Spotify Wrapped" i comparativa històrica ("All-Time").
-
----
-
-## 🚀 Característiques principals
-
-* **Mètriques 100% lliures i adaptables:**
-  * **Comptador simple (+1):** Cafès presos, llibres llegits, pel·lícules vistes, partits de pàdel...
-  * **Mesura numèrica amb unitat:** Kms de running (km), hores de son (h), despeses o estalvis (€)...
-  * **Hàbit / Check diari (Sí/No):** Meditació, beure 2L d'aigua, entrenar...
-  * **Puntuació / Escala (1 a 5):** Estat d'ànim, nivell d'energia, productivitat...
-* **Recap Anual ("Wrapped") & Històric:**
-  * Selector d'any (2026, 2025, etc.).
-  * Resum del total de registres i mètrica estrella de l'any.
-  * Comparativa de l'any natural amb el total acumulat des que vas començar a fer servir l'app.
-  * Mes rècord destacat per a cada mètrica.
-  * Gràfic de barres mensual de gener a desembre.
-* **Mode Demostració / Local:**
-  * L'aplicació inclou dades d'exemple inicials i persistència local perquè puguis provar-la immediatament sense necessitat de configurar Supabase el primer dia.
-* **Backend preparat amb Supabase:**
-  * Esquema SQL complet amb Row Level Security (RLS) a `supabase/schema.sql`.
+Aplicació mòbil de telemetria GPS i seguiment de rutes en 3D (React Native amb Expo i Supabase) pensada per a cotxe, moto, bicicleta, esquí, snowboard i 4x4.
 
 ---
 
-## 📱 Com provar l'aplicació al teu mòbil (Android / iOS)
+## 🗺️ Mapa 3D i Estètica Minimalista
 
-1. Descarrega l'aplicació gratuïta **Expo Go** des de Google Play Store (o App Store).
-2. Executa a la teva consola:
+- **Motor cartogràfic:** [MapLibre GL JS](https://maplibre.org/) (v3.6.2) amb càrrega resilient en doble CDN (`unpkg` + `jsdelivr`) i sense necessitat de tokens ni targetes de pagament.
+- **Relleu 3D real:** Dades d'elevació reals amb **AWS Open Data Terrarium DEM** (`raster-dem`) combinades amb una capa de `hillshade` per donar volum, ombres i profunditat a muntanyes, valls i pendents.
+- **Tessel·les vectorials:** [OpenFreeMap](https://openfreemap.org/) (`liberty` personalitzat).
+- **Estil visual inspirat en Pokémon GO:**
+  - Terreny verd suau natural i boscos en verd intens.
+  - Carreteres, carrers i camins en blanc/gris clar amb vores discretes.
+  - Aigua en blau cel clar.
+  - Edificis, comerços i punts d'interès comercials ocults per donar tot el protagonisme al relleu i la ruta.
+- **Càmera en perspectiva 3D:** Inclinació (`pitch`) de 58°, seguiment suau de la posició i orientació GPS, control tàctil per rotar/inclinar i mode 2D/3D intercanviable.
+- **Rastre GPS en blau elèctric (`#00E5FF`):** Dibuix en temps real durant l'activitat i visualització completa en revisar sessions anteriors.
+
+---
+
+## 🚀 Funcionalitats principals
+
+- **Send (Mapa en directe):**
+  - Selecció ràpida de vehicle/modalitat des de la barra superior.
+  - Velocímetre en directe (`KM/H`), distància, temps, velocitat punta i desnivell positiu.
+  - Gravació en segon pla (`expo-location` + `expo-task-manager`) amb servei en primer pla a Android.
+  - Canvi de tema visual (Pokémon GO, Muntanya Neu, Carretera Dark) i commutador 2D/3D.
+- **Sessions:**
+  - Historial de trajectes enregistrats amb mètriques detallades.
+  - Visor modal 3D (`RouteMapModal`) amb marcadors d'inici 🟢, final 🏁 i cota màxima ⛰️, perfil altimètric interactiu i controls de càmera.
+- **Garatge:**
+  - Gestió dels teus vehicles i modalitats amb icona i color personalitzats.
+- **Temporada:**
+  - Resum anual ("Wrapped") amb estadístiques acumulades i gràfics mensuals.
+- **Ajustos i Núvol:**
+  - Persistència local immediata i sincronització opcional amb **Supabase** (`supabase/schema.sql`).
+
+---
+
+## 📱 Com provar l'aplicació al mòbil
+
+1. Instal·la l'aplicació **Expo Go** a Android o iOS.
+2. Instal·la les dependències si encara no ho has fet:
    ```bash
-   npx expo start
+   npm install
    ```
-3. Escaneja el codi QR que apareixerà a la consola amb l'app Expo Go del teu mòbil. L'aplicació s'obrirà al moment!
+3. Inicia el servidor de desenvolupament d'Expo:
+   - **A la mateixa xarxa Wi-Fi:**
+     ```bash
+     npx expo start -c
+     ```
+   - **Amb dades mòbils o xarxes separades (túnel):**
+     ```bash
+     npx expo start --tunnel -c
+     ```
+4. Escaneja el codi QR amb Expo Go (o prem `r` al terminal per recarregar l'app).
 
 ---
 
-## 🗄️ Com connectar la teva Base de Dades Supabase
+## 🗄️ Configuració de Supabase (opcional)
 
-Quan vulguis sincronitzar al núvol:
-1. Crea un compte i un projecte gratuït a [supabase.com](https://supabase.com).
-2. Ves a l'apartat **SQL Editor** del panell de Supabase.
-3. Copia el contingut de [`supabase/schema.sql`](file:///c:/Users/User/Documents/StatsTracker/supabase/schema.sql) i prem **Run**.
-4. A les opcions del teu projecte (*Project Settings -> API*), copia l'URL i l'Anon Key.
-5. Edita el teu fitxer `.env`:
+1. Crea un projecte gratuït a [supabase.com](https://supabase.com).
+2. Executa l'esquema de [supabase/schema.sql](file:///C:/Users/User/Documents/FullSend/supabase/schema.sql) a l'**SQL Editor** de Supabase.
+3. Afegeix les claus al fitxer `.env` a l'arrel del projecte:
    ```env
    EXPO_PUBLIC_SUPABASE_URL=https://el-teu-projecte.supabase.co
    EXPO_PUBLIC_SUPABASE_ANON_KEY=la-teva-anon-key
    ```
-6. Reinicia el servidor d'Expo (`npx expo start -c`) i podràs crear el teu compte d'usuari a la pestanya **Ajustos**.
+4. Reinicia Expo (`npx expo start -c`).
 
 ---
 
 ## 🛠️ Comandes útils
 
-* `npx expo start`: Iniciar el servidor de desenvolupament
-* `npx tsc --noEmit`: Comprovació de tipus TypeScript
-* `npx expo-doctor`: Diagnosi de salut del projecte Expo
-
+- `npx expo start -c`: Inicia Expo netejant la memòria cau.
+- `npx tsc --noEmit`: Comprova els tipus de TypeScript.
+- `npx expo-doctor`: Revisa l'estat de les dependències i configuració d'Expo.
