@@ -68,8 +68,8 @@ export const RouteMapModal: React.FC<RouteMapModalProps> = ({
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@3.6.2/dist/maplibre-gl.css" />
-  <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" />
+  <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js" onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/maplibre-gl@3.6.2/dist/maplibre-gl.js';"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body {
@@ -217,165 +217,13 @@ export const RouteMapModal: React.FC<RouteMapModalProps> = ({
     var currentTheme = '${activeTheme}';
     var cursorMarker = null;
 
-    // Pokémon GO Minimalist Style Specification (Zero POIs, soft green, clean roads, 3D DEM)
-    function getPokemonGoStyle(theme) {
-      var isSnow = theme === 'snow_mountain';
-      var isDark = theme === 'dark_road';
-
-      var bgColor = isSnow ? '#EEF4F8' : isDark ? '#0F172A' : '#96D48F';
-      var parkColor = isSnow ? '#E2ECF2' : isDark ? '#1E293B' : '#82C87A';
-      var forestColor = isSnow ? '#D8E5ED' : isDark ? '#162235' : '#63B35C';
-      var waterColor = isSnow ? '#38BDF8' : isDark ? '#0284C7' : '#48CAE4';
-      var roadMajor = isSnow ? '#FFFFFF' : isDark ? '#334155' : '#FFFFFF';
-      var roadMinor = isSnow ? '#E2E8F0' : isDark ? '#1E293B' : '#F1F5F9';
-      var roadCasing = isSnow ? '#CBD5E1' : isDark ? '#090D16' : '#D1D5DB';
-      var skyColor = isSnow ? '#B8D8F0' : isDark ? '#090D16' : '#7EC8E3';
-      var fogColor = isSnow ? '#DCECF7' : isDark ? '#0F172A' : '#D0EAE4';
-
-      return {
-        version: 8,
-        sources: {
-          'openfreemap': {
-            type: 'vector',
-            tiles: ['https://tiles.openfreemap.org/planet/{z}/{x}/{y}.pbf'],
-            maxzoom: 14
-          },
-          'terrainSource': {
-            type: 'raster-dem',
-            tiles: ['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'],
-            encoding: 'terrarium',
-            tileSize: 256,
-            maxzoom: 15
-          }
-        },
-        terrain: {
-          source: 'terrainSource',
-          exaggeration: 1.55
-        },
-        sky: {
-          'sky-color': skyColor,
-          'sky-horizon-blend': 0.6,
-          'horizon-color': '#EBF7F5',
-          'fog-color': fogColor
-        },
-        layers: [
-          // 1. Natural Ground Terrain
-          {
-            id: 'background',
-            type: 'background',
-            paint: { 'background-color': bgColor }
-          },
-          // 2. Parks & Grass
-          {
-            id: 'layer-park',
-            type: 'fill',
-            source: 'openfreemap',
-            'source-layer': 'park',
-            paint: { 'fill-color': parkColor, 'fill-opacity': 0.85 }
-          },
-          // 3. Forests & Woods
-          {
-            id: 'layer-forest',
-            type: 'fill',
-            source: 'openfreemap',
-            'source-layer': 'landcover',
-            filter: ['==', 'subclass', 'wood'],
-            paint: { 'fill-color': forestColor, 'fill-opacity': 0.8 }
-          },
-          // 4. Water Bodies
-          {
-            id: 'layer-water',
-            type: 'fill',
-            source: 'openfreemap',
-            'source-layer': 'water',
-            paint: { 'fill-color': waterColor }
-          },
-          // 5. Waterways
-          {
-            id: 'layer-waterway',
-            type: 'line',
-            source: 'openfreemap',
-            'source-layer': 'waterway',
-            paint: { 'line-color': waterColor, 'line-width': 2.5 }
-          },
-          // 6. Major Roads Casing
-          {
-            id: 'layer-road-major-casing',
-            type: 'line',
-            source: 'openfreemap',
-            'source-layer': 'transportation',
-            filter: ['in', 'class', 'motorway', 'trunk', 'primary'],
-            paint: {
-              'line-color': roadCasing,
-              'line-width': ['interpolate', ['linear'], ['zoom'], 10, 2.5, 16, 7.5]
-            }
-          },
-          // 7. Major Roads Core
-          {
-            id: 'layer-road-major',
-            type: 'line',
-            source: 'openfreemap',
-            'source-layer': 'transportation',
-            filter: ['in', 'class', 'motorway', 'trunk', 'primary'],
-            paint: {
-              'line-color': roadMajor,
-              'line-width': ['interpolate', ['linear'], ['zoom'], 10, 1.8, 16, 6.0]
-            }
-          },
-          // 8. Secondary & Residential Streets
-          {
-            id: 'layer-road-street',
-            type: 'line',
-            source: 'openfreemap',
-            'source-layer': 'transportation',
-            filter: ['in', 'class', 'secondary', 'tertiary', 'minor', 'residential'],
-            paint: {
-              'line-color': roadMinor,
-              'line-width': ['interpolate', ['linear'], ['zoom'], 12, 1.5, 16, 4.0]
-            }
-          },
-          // 9. Paths, Tracks, Footways & Trails
-          {
-            id: 'layer-road-path',
-            type: 'line',
-            source: 'openfreemap',
-            'source-layer': 'transportation',
-            filter: ['in', 'class', 'path', 'track', 'service', 'footway', 'cycleway'],
-            paint: {
-              'line-color': roadCasing,
-              'line-dasharray': [2, 1],
-              'line-width': ['interpolate', ['linear'], ['zoom'], 12, 1.0, 16, 2.2]
-            }
-          },
-          // 10. Subtle Street Names (Only when zoomed in, POIs and businesses 100% removed!)
-          {
-            id: 'layer-road-name',
-            type: 'symbol',
-            source: 'openfreemap',
-            'source-layer': 'transportation_name',
-            minzoom: 14,
-            layout: {
-              'symbol-placement': 'line',
-              'text-field': '{name}',
-              'text-size': 11
-            },
-            paint: {
-              'text-color': isDark ? '#94A3B8' : '#334155',
-              'text-halo-color': isDark ? '#090D16' : '#FFFFFF',
-              'text-halo-width': 1.5
-            }
-          }
-        ]
-      };
-    }
-
     function initMap() {
       var defaultCenter = coords.length > 0 ? [coords[0].lng, coords[0].lat] : [2.1734, 41.3851];
       var defaultZoom = coords.length > 0 ? 14 : 10;
 
       map = new maplibregl.Map({
         container: 'map',
-        style: getPokemonGoStyle(currentTheme),
+        style: 'https://tiles.openfreemap.org/styles/liberty',
         center: defaultCenter,
         zoom: defaultZoom,
         pitch: 58,
@@ -388,12 +236,111 @@ export const RouteMapModal: React.FC<RouteMapModalProps> = ({
       map.touchZoomRotate.enable();
 
       map.on('load', function() {
+        // 1. Add AWS Terrarium 3D Elevation Mesh (Real Mountain & Valley Volume)
+        try {
+          map.addSource('terrainSource', {
+            type: 'raster-dem',
+            tiles: ['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'],
+            encoding: 'terrarium',
+            tileSize: 256,
+            maxzoom: 15
+          });
+          map.setTerrain({ source: 'terrainSource', exaggeration: 1.55 });
+
+          // Real 3D Hillshade for mountain and valley volume
+          map.addLayer({
+            id: 'terrain-shading',
+            type: 'hillshade',
+            source: 'terrainSource',
+            paint: {
+              'hillshade-shadow-color': currentTheme === 'dark_road' ? '#0F172A' : '#3B7A49',
+              'hillshade-highlight-color': '#FFFFFF',
+              'hillshade-accent-color': '#5CA96A',
+              'hillshade-exaggeration': 0.85
+            }
+          }, 'water');
+        } catch(e) {}
+
+        // 2. Apply Pokémon GO Minimalist Aesthetic
+        applyPokemonGoTheme();
+
         if (coords.length > 1) {
           drawRouteAndMarkers();
           initElevationProfile();
           fitRouteBounds();
         }
       });
+    }
+
+    // Transform OpenFreeMap to Pokémon GO Minimalist Aesthetic
+    function applyPokemonGoTheme() {
+      if (!map) return;
+      try {
+        var isSnow = currentTheme === 'snow_mountain';
+        var isDark = currentTheme === 'dark_road';
+
+        var bgColor = isSnow ? '#EEF4F8' : isDark ? '#0F172A' : '#8DD484';
+        var resColor = isSnow ? '#E2ECF2' : isDark ? '#162235' : '#96DC8E';
+        var parkColor = isSnow ? '#D8E5ED' : isDark ? '#1E293B' : '#7EC874';
+        var forestColor = isSnow ? '#CBDCE7' : isDark ? '#162030' : '#5EAF55';
+        var waterColor = isSnow ? '#38BDF8' : isDark ? '#0284C7' : '#48CAE4';
+        var roadMajor = isSnow ? '#FFFFFF' : isDark ? '#334155' : '#FFFFFF';
+        var roadMinor = isSnow ? '#FFFFFF' : isDark ? '#1E293B' : '#FFFFFF';
+        var roadCasing = isSnow ? '#CBD5E1' : isDark ? '#090D16' : '#B4CBB4';
+
+        // Hide buildings (2D & 3D extrusions)
+        if (map.getLayer('building')) map.setLayoutProperty('building', 'visibility', 'none');
+        if (map.getLayer('building-3d')) map.setLayoutProperty('building-3d', 'visibility', 'none');
+
+        // Hide commercial POIs, shops, restaurants, businesses, hotels & clutter
+        var poiLayers = ['poi_r20', 'poi_r7', 'poi_r1', 'poi_transit', 'airport', 'label_other'];
+        poiLayers.forEach(function(l) {
+          if (map.getLayer(l)) map.setLayoutProperty(l, 'visibility', 'none');
+        });
+
+        // Set natural soft green terrain colors
+        if (map.getLayer('background')) map.setPaintProperty('background', 'background-color', bgColor);
+        if (map.getLayer('landcover_grass')) map.setPaintProperty('landcover_grass', 'fill-color', parkColor);
+        if (map.getLayer('landcover_wood')) map.setPaintProperty('landcover_wood', 'fill-color', forestColor);
+        if (map.getLayer('park')) map.setPaintProperty('park', 'fill-color', parkColor);
+        if (map.getLayer('landuse_residential')) map.setPaintProperty('landuse_residential', 'fill-color', resColor);
+
+        // Set vibrant water colors
+        if (map.getLayer('water')) map.setPaintProperty('water', 'fill-color', waterColor);
+        if (map.getLayer('waterway_river')) map.setPaintProperty('waterway_river', 'line-color', waterColor);
+        if (map.getLayer('waterway_other')) map.setPaintProperty('waterway_other', 'line-color', waterColor);
+
+        // Set clean white / light grey road colors and subtle casings (Pokémon GO style)
+        var majorRoads = ['road_motorway', 'road_trunk_primary', 'bridge_motorway', 'bridge_trunk_primary', 'tunnel_motorway', 'tunnel_trunk_primary'];
+        majorRoads.forEach(function(r) {
+          if (map.getLayer(r)) map.setPaintProperty(r, 'line-color', roadMajor);
+        });
+
+        var minorRoads = ['road_secondary_tertiary', 'road_minor', 'bridge_secondary_tertiary', 'bridge_street', 'tunnel_secondary_tertiary', 'tunnel_minor'];
+        minorRoads.forEach(function(r) {
+          if (map.getLayer(r)) map.setPaintProperty(r, 'line-color', roadMinor);
+        });
+
+        var casingRoads = ['road_motorway_casing', 'road_trunk_primary_casing', 'road_secondary_tertiary_casing', 'road_minor_casing', 'road_service_track_casing', 'road_service_track', 'road_path_pedestrian'];
+        casingRoads.forEach(function(r) {
+          if (map.getLayer(r)) map.setPaintProperty(r, 'line-color', roadCasing);
+        });
+
+        // Hillshade color update
+        if (map.getLayer('terrain-shading')) {
+          map.setPaintProperty('terrain-shading', 'hillshade-shadow-color', isDark ? '#0F172A' : '#3B7A49');
+        }
+
+        // Sky atmosphere
+        if (map.setSky) {
+          map.setSky({
+            'sky-color': isSnow ? '#B8D8F0' : isDark ? '#090D16' : '#7EC8E3',
+            'sky-horizon-blend': 0.6,
+            'horizon-color': '#EBF7F5',
+            'fog-color': isSnow ? '#DCECF7' : isDark ? '#0F172A' : '#D0EAE4'
+          });
+        }
+      } catch(e) {}
     }
 
     function drawRouteAndMarkers() {
@@ -528,11 +475,7 @@ export const RouteMapModal: React.FC<RouteMapModalProps> = ({
       var themes = ['pokemon_go', 'snow_mountain', 'dark_road'];
       var nextIdx = (themes.indexOf(currentTheme) + 1) % themes.length;
       currentTheme = themes[nextIdx];
-      map.setStyle(getPokemonGoStyle(currentTheme));
-
-      map.once('style.load', function() {
-        drawRouteAndMarkers();
-      });
+      applyPokemonGoTheme();
 
       var themeBtn = document.getElementById('themeBtn');
       if (currentTheme === 'snow_mountain') {
@@ -751,7 +694,7 @@ export const RouteMapModal: React.FC<RouteMapModalProps> = ({
             {coordinates.length > 0 ? (
               <WebView
                 originWhitelist={['*']}
-                source={{ html: generatePokemonGo3DHtml(), baseUrl: 'https://tiles.openfreemap.org' }}
+                source={{ html: generatePokemonGo3DHtml(), baseUrl: 'https://unpkg.com' }}
                 style={styles.webView}
                 javaScriptEnabled={true}
                 domStorageEnabled={true}
