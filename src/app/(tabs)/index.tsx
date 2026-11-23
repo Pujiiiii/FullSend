@@ -565,29 +565,42 @@ export default function FullSendLiveScreen() {
 
         var bgColor = isDark ? '#0F172A' : '#8DD484';
         var resColor = isDark ? '#162235' : '#96DC8E';
-        var parkColor = isDark ? '#1E293B' : '#7EC874';
-        var forestColor = isDark ? '#162030' : '#5EAF55';
+        var parkColor = isDark ? '#172536' : '#7EC874';
+        var forestColor = isDark ? '#13202E' : '#5EAF55';
         var waterColor = isDark ? '#0284C7' : '#48CAE4';
-        var roadMajor = isDark ? '#334155' : '#FFFFFF';
-        var roadMinor = isDark ? '#1E293B' : '#FFFFFF';
-        var roadCasing = isDark ? '#090D16' : '#B4CBB4';
+        var roadMajor = isDark ? '#475569' : '#FFFFFF';
+        var roadMinor = isDark ? '#334155' : '#FFFFFF';
+        var roadCasing = isDark ? '#0B1120' : '#B4CBB4';
 
-        // Hide buildings (2D & 3D extrusions)
-        if (map.getLayer('building')) map.setLayoutProperty('building', 'visibility', 'none');
-        if (map.getLayer('building-3d')) map.setLayoutProperty('building-3d', 'visibility', 'none');
-
-        // Hide commercial POIs, shops, restaurants, businesses, hotels & clutter
-        var poiLayers = ['poi_r20', 'poi_r7', 'poi_r1', 'poi_transit', 'airport', 'label_other'];
-        poiLayers.forEach(function(l) {
+        // Hide buildings (2D & 3D extrusions), patterns & clutter
+        var hideLayers = [
+          'building', 'building-3d', 'road_area_pattern', 'landcover_wetland',
+          'park_outline', 'road_one_way_arrow', 'road_one_way_arrow_opposite',
+          'poi_r20', 'poi_r7', 'poi_r1', 'poi_transit', 'airport', 'label_other'
+        ];
+        hideLayers.forEach(function(l) {
           if (map.getLayer(l)) map.setLayoutProperty(l, 'visibility', 'none');
         });
 
-        // Set natural terrain colors
+        // Set natural terrain & landuse colors (no bright patches in night mode!)
         if (map.getLayer('background')) map.setPaintProperty('background', 'background-color', bgColor);
         if (map.getLayer('landcover_grass')) map.setPaintProperty('landcover_grass', 'fill-color', parkColor);
         if (map.getLayer('landcover_wood')) map.setPaintProperty('landcover_wood', 'fill-color', forestColor);
-        if (map.getLayer('park')) map.setPaintProperty('park', 'fill-color', parkColor);
+        if (map.getLayer('park')) {
+          map.setPaintProperty('park', 'fill-color', parkColor);
+          map.setPaintProperty('park', 'fill-outline-color', parkColor);
+        }
         if (map.getLayer('landuse_residential')) map.setPaintProperty('landuse_residential', 'fill-color', resColor);
+        if (map.getLayer('landuse_pitch')) map.setPaintProperty('landuse_pitch', 'fill-color', parkColor);
+        if (map.getLayer('landuse_track')) map.setPaintProperty('landuse_track', 'fill-color', parkColor);
+        if (map.getLayer('landuse_cemetery')) map.setPaintProperty('landuse_cemetery', 'fill-color', forestColor);
+        if (map.getLayer('landuse_hospital')) map.setPaintProperty('landuse_hospital', 'fill-color', resColor);
+        if (map.getLayer('landuse_school')) map.setPaintProperty('landuse_school', 'fill-color', resColor);
+        if (map.getLayer('landcover_sand')) map.setPaintProperty('landcover_sand', 'fill-color', isDark ? '#1E293B' : '#E9D8A6');
+        if (map.getLayer('landcover_ice')) map.setPaintProperty('landcover_ice', 'fill-color', isDark ? '#334155' : '#E2E8F0');
+        if (map.getLayer('aeroway_fill')) map.setPaintProperty('aeroway_fill', 'fill-color', resColor);
+        if (map.getLayer('aeroway_runway')) map.setPaintProperty('aeroway_runway', 'line-color', roadCasing);
+        if (map.getLayer('aeroway_taxiway')) map.setPaintProperty('aeroway_taxiway', 'line-color', roadCasing);
 
         // Set vibrant water colors
         if (map.getLayer('water')) map.setPaintProperty('water', 'fill-color', waterColor);
