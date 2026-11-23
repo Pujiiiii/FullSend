@@ -9,6 +9,7 @@ const ACTIVE_ROUTE_STORAGE_KEY = '@statstracker_active_gps_route_v3';
 
 export interface RouteTrackingState {
   isTracking: boolean;
+  vehicleId?: string;
   startTime: number;
   elapsedSeconds: number;
   distanceKm: number;
@@ -19,14 +20,17 @@ export interface RouteTrackingState {
   elevationGainM: number;
   elevationLossM: number;
   coordinatesCount: number;
+  coordinates?: GpsPoint[];
 }
 
 interface StoredRouteData {
+  vehicleId?: string;
   startTime: number;
   distanceKm: number;
   maxSpeedKmh: number;
   lastCoords: Location.LocationObjectCoords | null;
   lastTimestamp: number;
+  lastValidAltM?: number | null;
   coordinates: GpsPoint[];
   elevationGainM: number;
   elevationLossM: number;
@@ -55,11 +59,13 @@ export function calculateDistanceKm(
 }
 
 let activeRoute: {
+  vehicleId?: string;
   startTime: number;
   distanceKm: number;
   maxSpeedKmh: number;
   lastCoords: Location.LocationObjectCoords | null;
   lastTimestamp: number;
+  lastValidAltM?: number | null;
   coordinates: GpsPoint[];
   elevationGainM: number;
   elevationLossM: number;
@@ -72,11 +78,13 @@ let activeRoute: {
 async function persistRouteState() {
   if (!activeRoute) return;
   const snapshot: StoredRouteData = {
+    vehicleId: activeRoute.vehicleId,
     startTime: activeRoute.startTime,
     distanceKm: activeRoute.distanceKm,
     maxSpeedKmh: activeRoute.maxSpeedKmh,
     lastCoords: activeRoute.lastCoords,
     lastTimestamp: activeRoute.lastTimestamp,
+    lastValidAltM: activeRoute.lastValidAltM ?? null,
     coordinates: activeRoute.coordinates,
     elevationGainM: activeRoute.elevationGainM,
     elevationLossM: activeRoute.elevationLossM,
@@ -88,6 +96,12 @@ async function persistRouteState() {
     await AsyncStorage.setItem(ACTIVE_ROUTE_STORAGE_KEY, JSON.stringify(snapshot));
   } catch (e) {
     console.warn('Error saving GPS snapshot:', e);
+  }
+}
+
+export function attachRouteUpdateCallback(cb: ((state: RouteTrackingState) => void) | null) {
+  if (activeRoute) {
+    activeRoute.onUpdateCallback = cb;
   }
 }
 
@@ -114,7 +128,8 @@ TaskManager.defineTask(GPS_ROUTE_TASK, async ({ data, error }) => {
   const { locations } = data as { locations: Location.LocationObject[] };
   if (!locations || locations.length === 0) return;
 
-  for (const loc of locations) {
+  const sorted = [...locations].sort((a, b) => a.timestamp - b.timestamp);
+  for (const loc of sorted) {
     processLocationUpdate(loc);
   }
 
@@ -176,27 +191,40 @@ export function processLocationUpdate(loc: Location.LocationObject) {
     }
   }
 
-  // 4. Altitude & Elevation Gain/Loss (+D / -D)
-  const currentAlt = coords.altitude !== null && coords.altitude !== undefined
+  // 4. Altitude & Elevation Gain/Loss (+D / -D) with accuracy check & smoothing
+  const altAcc = (coords as any).altitudeAccuracy;
+  const isAltReliable = altAcc === null || altAcc === undefined || altAcc <= 35;
+  const rawAlt = coords.altitude !== null && coords.altitude !== undefined
     ? Math.round(coords.altitude)
     : null;
 
-  if (currentAlt !== null) {
-    if (activeRoute.maxAltitudeM === null || currentAlt > activeRoute.maxAltitudeM) {
-      activeRoute.maxAltitudeM = currentAlt;
+  let currentAlt: number | null = activeRoute.lastValidAltM ?? null;
+  if (rawAlt !== null && isAltReliable) {
+    // Exponential smoothing to avoid GPS vertical jitter spikes
+    const smoothedAlt = activeRoute.lastValidAltM !== null && activeRoute.lastValidAltM !== undefined
+      ? Math.round(activeRoute.lastValidAltM * 0.65 + rawAlt * 0.35)
+      : rawAlt;
+    currentAlt = smoothedAlt;
+
+    if (activeRoute.maxAltitudeM === null || smoothedAlt > activeRoute.maxAltitudeM) {
+      activeRoute.maxAltitudeM = smoothedAlt;
     }
-    if (activeRoute.minAltitudeM === null || currentAlt < activeRoute.minAltitudeM) {
-      activeRoute.minAltitudeM = currentAlt;
+    if (activeRoute.minAltitudeM === null || smoothedAlt < activeRoute.minAltitudeM) {
+      activeRoute.minAltitudeM = smoothedAlt;
     }
 
-    if (activeRoute.lastCoords?.altitude !== null && activeRoute.lastCoords?.altitude !== undefined) {
-      const altDelta = currentAlt - Math.round(activeRoute.lastCoords.altitude);
-      // Filter micro elevation jitter (> 2 meters and < 200m delta)
-      if (altDelta >= 2 && altDelta <= 200) {
+    if (activeRoute.lastValidAltM !== null && activeRoute.lastValidAltM !== undefined) {
+      const altDelta = smoothedAlt - activeRoute.lastValidAltM;
+      // 4m hysteresis threshold to filter micro jitter while keeping real climbs
+      if (altDelta >= 4 && altDelta <= 150) {
         activeRoute.elevationGainM += altDelta;
-      } else if (altDelta <= -2 && altDelta >= -200) {
+        activeRoute.lastValidAltM = smoothedAlt;
+      } else if (altDelta <= -4 && altDelta >= -150) {
         activeRoute.elevationLossM += Math.abs(altDelta);
+        activeRoute.lastValidAltM = smoothedAlt;
       }
+    } else {
+      activeRoute.lastValidAltM = smoothedAlt;
     }
   }
 
@@ -248,7 +276,8 @@ export function processLocationUpdate(loc: Location.LocationObject) {
 export async function startGpsTracking(
   onUpdate: (state: RouteTrackingState) => void,
   mapTheme: MapTheme = 'dark_road',
-  keepScreenAwake = true
+  keepScreenAwake = true,
+  vehicleId?: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
     const { status: fgStatus } = await Location.requestForegroundPermissionsAsync();
@@ -259,16 +288,18 @@ export async function startGpsTracking(
     try {
       await Location.requestBackgroundPermissionsAsync();
     } catch {
-      // Foreground service notification is sufficient
+      // Foreground service notification is sufficient on Android
     }
 
     const now = Date.now();
     activeRoute = {
+      vehicleId,
       startTime: now,
       distanceKm: 0,
       maxSpeedKmh: 0,
       lastCoords: null,
       lastTimestamp: now,
+      lastValidAltM: null,
       coordinates: [],
       elevationGainM: 0,
       elevationLossM: 0,
@@ -289,20 +320,26 @@ export async function startGpsTracking(
     }
 
     const hasStarted = await Location.hasStartedLocationUpdatesAsync(GPS_ROUTE_TASK).catch(() => false);
-    if (!hasStarted) {
-      await Location.startLocationUpdatesAsync(GPS_ROUTE_TASK, {
-        accuracy: Location.Accuracy.BestForNavigation,
-        timeInterval: 1500,
-        distanceInterval: 4,
-        showsBackgroundLocationIndicator: true,
-        foregroundService: {
-          notificationTitle: 'StatsTracker • Gravant trajecte',
-          notificationBody: 'Mesurant distància, velocitat màxima, ruta i altitud...',
-          notificationColor: '#6366F1',
-          killServiceOnDestroy: false,
-        },
-      });
+    if (hasStarted) {
+      await Location.stopLocationUpdatesAsync(GPS_ROUTE_TASK).catch(() => {});
     }
+
+    await Location.startLocationUpdatesAsync(GPS_ROUTE_TASK, {
+      accuracy: Location.Accuracy.BestForNavigation,
+      timeInterval: 1500,
+      distanceInterval: 4,
+      deferredUpdatesInterval: 0,
+      deferredUpdatesDistance: 0,
+      pausesUpdatesAutomatically: false,
+      activityType: Location.ActivityType.AutomotiveNavigation,
+      showsBackgroundLocationIndicator: true,
+      foregroundService: {
+        notificationTitle: 'Full Send • Gravant trajecte',
+        notificationBody: 'Registrant velocitat, ruta i desnivell en segon pla...',
+        notificationColor: '#CCFF00',
+        killServiceOnDestroy: false,
+      },
+    });
 
     return { success: true };
   } catch (err: any) {
@@ -311,6 +348,7 @@ export async function startGpsTracking(
 }
 
 export async function stopGpsTracking(): Promise<{
+  vehicleId?: string;
   distance_km: number;
   duration_seconds: number;
   max_speed_kmh: number;
@@ -374,6 +412,7 @@ export async function stopGpsTracking(): Promise<{
     : 0;
 
   return {
+    vehicleId: snapshot.vehicleId,
     distance_km: snapshot.distanceKm,
     duration_seconds: totalElapsedSec,
     max_speed_kmh: snapshot.maxSpeedKmh,
@@ -388,6 +427,23 @@ export async function stopGpsTracking(): Promise<{
 }
 
 export async function checkActiveRouteOnStartup(): Promise<RouteTrackingState | null> {
+  // Always prefer fresh AsyncStorage if background task wrote newer points while UI was paused
+  try {
+    const stored = await AsyncStorage.getItem(ACTIVE_ROUTE_STORAGE_KEY);
+    if (stored) {
+      const parsed: StoredRouteData = JSON.parse(stored);
+      const existingCb = activeRoute?.onUpdateCallback ?? null;
+      if (!activeRoute || parsed.coordinates.length >= activeRoute.coordinates.length) {
+        activeRoute = {
+          ...parsed,
+          onUpdateCallback: existingCb,
+        };
+      }
+    }
+  } catch {
+    // ignore
+  }
+
   if (activeRoute) {
     const elapsedSec = Math.max(1, Math.floor((Date.now() - activeRoute.startTime) / 1000));
     const hours = elapsedSec / 3600;
@@ -396,48 +452,19 @@ export async function checkActiveRouteOnStartup(): Promise<RouteTrackingState | 
       : 0;
     return {
       isTracking: true,
+      vehicleId: activeRoute.vehicleId,
       startTime: activeRoute.startTime,
       elapsedSeconds: elapsedSec,
       distanceKm: activeRoute.distanceKm,
       currentSpeedKmh: 0,
       maxSpeedKmh: activeRoute.maxSpeedKmh,
       avgSpeedKmh: avgSpeed,
-      currentAltitudeM: activeRoute.coordinates[activeRoute.coordinates.length - 1]?.altitude || null,
+      currentAltitudeM: activeRoute.coordinates[activeRoute.coordinates.length - 1]?.altitude ?? null,
       elevationGainM: activeRoute.elevationGainM,
       elevationLossM: activeRoute.elevationLossM,
       coordinatesCount: activeRoute.coordinates.length,
+      coordinates: activeRoute.coordinates,
     };
-  }
-
-  try {
-    const stored = await AsyncStorage.getItem(ACTIVE_ROUTE_STORAGE_KEY);
-    if (stored) {
-      const parsed: StoredRouteData = JSON.parse(stored);
-      activeRoute = {
-        ...parsed,
-        onUpdateCallback: null,
-      };
-      const elapsedSec = Math.max(1, Math.floor((Date.now() - parsed.startTime) / 1000));
-      const hours = elapsedSec / 3600;
-      const avgSpeed = hours > 0 && parsed.distanceKm > 0
-        ? Number((parsed.distanceKm / hours).toFixed(1))
-        : 0;
-      return {
-        isTracking: true,
-        startTime: parsed.startTime,
-        elapsedSeconds: elapsedSec,
-        distanceKm: parsed.distanceKm,
-        currentSpeedKmh: 0,
-        maxSpeedKmh: parsed.maxSpeedKmh,
-        avgSpeedKmh: avgSpeed,
-        currentAltitudeM: parsed.coordinates[parsed.coordinates.length - 1]?.altitude || null,
-        elevationGainM: parsed.elevationGainM,
-        elevationLossM: parsed.elevationLossM,
-        coordinatesCount: parsed.coordinates.length,
-      };
-    }
-  } catch {
-    // ignore
   }
 
   return null;

@@ -29,7 +29,9 @@ export const RouteMapModal: React.FC<RouteMapModalProps> = ({
   metadata,
   distanceKm,
 }) => {
-  const [activeTheme, setActiveTheme] = useState<'pokemon_go' | 'snow_mountain' | 'dark_road'>('pokemon_go');
+  const [activeTheme] = useState<'day' | 'night'>(
+    metadata?.map_theme === 'dark_road' ? 'night' : 'day'
+  );
 
   const coordinates: GpsPoint[] = metadata?.coordinates || [];
   const totalDist = metadata?.distance_km ?? distanceKm ?? 0;
@@ -68,8 +70,8 @@ export const RouteMapModal: React.FC<RouteMapModalProps> = ({
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" />
-  <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js" onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/maplibre-gl@3.6.2/dist/maplibre-gl.js';"></script>
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.3.0/dist/maplibre-gl.css" />
+  <script src="https://unpkg.com/maplibre-gl@5.3.0/dist/maplibre-gl.js" onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/maplibre-gl@5.3.0/dist/maplibre-gl.js';"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body {
@@ -190,7 +192,7 @@ export const RouteMapModal: React.FC<RouteMapModalProps> = ({
       <span>🔄</span> <span>Girar 3D</span>
     </button>
     <button id="themeBtn" class="hud-btn" onclick="cycleTheme()">
-      <span>🌿</span> <span>Pokémon GO</span>
+      <span>${activeTheme === 'night' ? '🌙' : '☀️'}</span> <span>${activeTheme === 'night' ? 'Mode Nit' : 'Mode Dia'}</span>
     </button>
     <button class="hud-btn" onclick="fitRouteBounds()">
       <span>🎯</span> <span>Centrar</span>
@@ -253,10 +255,29 @@ export const RouteMapModal: React.FC<RouteMapModalProps> = ({
             type: 'hillshade',
             source: 'terrainSource',
             paint: {
-              'hillshade-shadow-color': currentTheme === 'dark_road' ? '#0F172A' : '#3B7A49',
+              'hillshade-shadow-color': currentTheme === 'night' ? '#020617' : '#3B7A49',
               'hillshade-highlight-color': '#FFFFFF',
               'hillshade-accent-color': '#5CA96A',
               'hillshade-exaggeration': 0.85
+            }
+          }, 'water');
+
+          // Paint mountains above 1500m in light grey / snow white
+          map.addLayer({
+            id: 'snow-peaks',
+            type: 'color-relief',
+            source: 'terrainSource',
+            paint: {
+              'color-relief-color': [
+                'interpolate',
+                ['linear'],
+                ['elevation'],
+                0, 'rgba(0, 0, 0, 0)',
+                1480, 'rgba(226, 232, 240, 0)',
+                1550, 'rgba(203, 213, 225, 0.6)',
+                1950, 'rgba(241, 245, 249, 0.86)',
+                2450, 'rgba(255, 255, 255, 0.96)'
+              ]
             }
           }, 'water');
         } catch(e) {}
@@ -272,21 +293,20 @@ export const RouteMapModal: React.FC<RouteMapModalProps> = ({
       });
     }
 
-    // Transform OpenFreeMap to Pokémon GO Minimalist Aesthetic
+    // Transform OpenFreeMap to Pokémon GO Minimalist Aesthetic (Day / Night)
     function applyPokemonGoTheme() {
       if (!map) return;
       try {
-        var isSnow = currentTheme === 'snow_mountain';
-        var isDark = currentTheme === 'dark_road';
+        var isDark = currentTheme === 'night';
 
-        var bgColor = isSnow ? '#EEF4F8' : isDark ? '#0F172A' : '#8DD484';
-        var resColor = isSnow ? '#E2ECF2' : isDark ? '#162235' : '#96DC8E';
-        var parkColor = isSnow ? '#D8E5ED' : isDark ? '#1E293B' : '#7EC874';
-        var forestColor = isSnow ? '#CBDCE7' : isDark ? '#162030' : '#5EAF55';
-        var waterColor = isSnow ? '#38BDF8' : isDark ? '#0284C7' : '#48CAE4';
-        var roadMajor = isSnow ? '#FFFFFF' : isDark ? '#334155' : '#FFFFFF';
-        var roadMinor = isSnow ? '#FFFFFF' : isDark ? '#1E293B' : '#FFFFFF';
-        var roadCasing = isSnow ? '#CBD5E1' : isDark ? '#090D16' : '#B4CBB4';
+        var bgColor = isDark ? '#0F172A' : '#8DD484';
+        var resColor = isDark ? '#162235' : '#96DC8E';
+        var parkColor = isDark ? '#1E293B' : '#7EC874';
+        var forestColor = isDark ? '#162030' : '#5EAF55';
+        var waterColor = isDark ? '#0284C7' : '#48CAE4';
+        var roadMajor = isDark ? '#334155' : '#FFFFFF';
+        var roadMinor = isDark ? '#1E293B' : '#FFFFFF';
+        var roadCasing = isDark ? '#090D16' : '#B4CBB4';
 
         // Hide buildings (2D & 3D extrusions)
         if (map.getLayer('building')) map.setLayoutProperty('building', 'visibility', 'none');
@@ -298,7 +318,7 @@ export const RouteMapModal: React.FC<RouteMapModalProps> = ({
           if (map.getLayer(l)) map.setLayoutProperty(l, 'visibility', 'none');
         });
 
-        // Set natural soft green terrain colors
+        // Set natural terrain colors
         if (map.getLayer('background')) map.setPaintProperty('background', 'background-color', bgColor);
         if (map.getLayer('landcover_grass')) map.setPaintProperty('landcover_grass', 'fill-color', parkColor);
         if (map.getLayer('landcover_wood')) map.setPaintProperty('landcover_wood', 'fill-color', forestColor);
@@ -310,7 +330,7 @@ export const RouteMapModal: React.FC<RouteMapModalProps> = ({
         if (map.getLayer('waterway_river')) map.setPaintProperty('waterway_river', 'line-color', waterColor);
         if (map.getLayer('waterway_other')) map.setPaintProperty('waterway_other', 'line-color', waterColor);
 
-        // Set clean white / light grey road colors and subtle casings (Pokémon GO style)
+        // Set clean road colors and subtle casings
         var majorRoads = ['road_motorway', 'road_trunk_primary', 'bridge_motorway', 'bridge_trunk_primary', 'tunnel_motorway', 'tunnel_trunk_primary'];
         majorRoads.forEach(function(r) {
           if (map.getLayer(r)) map.setPaintProperty(r, 'line-color', roadMajor);
@@ -328,16 +348,16 @@ export const RouteMapModal: React.FC<RouteMapModalProps> = ({
 
         // Hillshade color update
         if (map.getLayer('terrain-shading')) {
-          map.setPaintProperty('terrain-shading', 'hillshade-shadow-color', isDark ? '#0F172A' : '#3B7A49');
+          map.setPaintProperty('terrain-shading', 'hillshade-shadow-color', isDark ? '#020617' : '#3B7A49');
         }
 
         // Sky atmosphere
         if (map.setSky) {
           map.setSky({
-            'sky-color': isSnow ? '#B8D8F0' : isDark ? '#090D16' : '#7EC8E3',
+            'sky-color': isDark ? '#090D16' : '#7EC8E3',
             'sky-horizon-blend': 0.6,
-            'horizon-color': '#EBF7F5',
-            'fog-color': isSnow ? '#DCECF7' : isDark ? '#0F172A' : '#D0EAE4'
+            'horizon-color': isDark ? '#1E293B' : '#EBF7F5',
+            'fog-color': isDark ? '#0F172A' : '#D0EAE4'
           });
         }
       } catch(e) {}
@@ -472,18 +492,14 @@ export const RouteMapModal: React.FC<RouteMapModalProps> = ({
     }
 
     function cycleTheme() {
-      var themes = ['pokemon_go', 'snow_mountain', 'dark_road'];
-      var nextIdx = (themes.indexOf(currentTheme) + 1) % themes.length;
-      currentTheme = themes[nextIdx];
+      currentTheme = currentTheme === 'day' ? 'night' : 'day';
       applyPokemonGoTheme();
 
       var themeBtn = document.getElementById('themeBtn');
-      if (currentTheme === 'snow_mountain') {
-        themeBtn.innerHTML = '<span>❄️</span> <span>Muntanya Neu</span>';
-      } else if (currentTheme === 'dark_road') {
-        themeBtn.innerHTML = '<span>🌙</span> <span>Carretera Dark</span>';
+      if (currentTheme === 'night') {
+        themeBtn.innerHTML = '<span>🌙</span> <span>Mode Nit</span>';
       } else {
-        themeBtn.innerHTML = '<span>🌿</span> <span>Pokémon GO</span>';
+        themeBtn.innerHTML = '<span>☀️</span> <span>Mode Dia</span>';
       }
     }
 
@@ -623,11 +639,9 @@ export const RouteMapModal: React.FC<RouteMapModalProps> = ({
                   {title}
                 </Text>
                 <Text style={styles.headerSubtitle}>
-                  {activeTheme === 'snow_mountain'
-                    ? 'Relleu 3D Neu i Muntanya'
-                    : activeTheme === 'dark_road'
-                    ? 'Relleu 3D Carretera Dark'
-                    : 'Relleu 3D Estil Pokémon GO'}
+                  {activeTheme === 'night'
+                    ? 'Relleu 3D Minimalista • Nit'
+                    : 'Relleu 3D Minimalista • Dia'}
                 </Text>
               </View>
             </View>

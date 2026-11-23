@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   Modal,
   Platform,
+  AppState,
 } from 'react-native';
 import { WebView } from 'react-native-webview';
 import * as Location from 'expo-location';
@@ -16,6 +17,7 @@ import {
   startGpsTracking,
   stopGpsTracking,
   checkActiveRouteOnStartup,
+  attachRouteUpdateCallback,
   RouteTrackingState,
 } from '../../utils/gpsTracker';
 import { CustomAlertModal, CustomAlertOptions } from '../../components/CustomAlertModal';
@@ -38,7 +40,7 @@ export default function FullSendLiveScreen() {
   const [elapsedSec, setElapsedSec] = useState(0);
   const [elevationGainM, setElevationGainM] = useState(0);
   const [currentAltM, setCurrentAltM] = useState<number | null>(null);
-  const [mapTheme, setMapTheme] = useState<'dark_road' | 'snow_mountain' | 'satellite' | 'streets'>('dark_road');
+  const [mapTheme, setMapTheme] = useState<'day' | 'night'>('day');
   const [is3D, setIs3D] = useState(true);
   const [vehicleModalVisible, setVehicleModalVisible] = useState(false);
 
@@ -56,6 +58,9 @@ export default function FullSendLiveScreen() {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const mapReadyRef = useRef<boolean>(false);
   const lastCoordsRef = useRef<Location.LocationObjectCoords | null>(null);
+  const pendingTrailRef = useRef<[number, number][] | null>(null);
+  const selectedVehicleRef = useRef(selectedVehicle);
+  selectedVehicleRef.current = selectedVehicle;
 
   const sendLocationToMap = (
     coords: Location.LocationObjectCoords,
@@ -86,7 +91,52 @@ export default function FullSendLiveScreen() {
     }, 1000);
   };
 
-  // Initial Location & Permission
+  const applyTrackingState = useCallback((state: RouteTrackingState) => {
+    setDistanceKm(state.distanceKm);
+    setSpeedKmh(state.currentSpeedKmh);
+    setMaxSpeedKmh(state.maxSpeedKmh);
+    if (state.currentAltitudeM !== null) {
+      setCurrentAltM(state.currentAltitudeM);
+    }
+    setElevationGainM(state.elevationGainM);
+
+    Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High }).then((loc) => {
+      sendLocationToMap(loc.coords, true, selectedVehicleRef.current?.icon);
+    }).catch(() => {});
+  }, []);
+
+  const syncActiveRoute = useCallback(async () => {
+    const existing = await checkActiveRouteOnStartup();
+    if (existing && existing.isTracking) {
+      setIsRecording(true);
+      if (existing.vehicleId) {
+        setSelectedVehicleId(existing.vehicleId);
+      }
+      setDistanceKm(existing.distanceKm);
+      setMaxSpeedKmh(existing.maxSpeedKmh);
+      setElevationGainM(existing.elevationGainM);
+      if (existing.currentAltitudeM !== null) {
+        setCurrentAltM(existing.currentAltitudeM);
+      }
+      startTimer(existing.startTime);
+      attachRouteUpdateCallback(applyTrackingState);
+
+      if (existing.coordinates && existing.coordinates.length > 0) {
+        const trailCoords: [number, number][] = existing.coordinates.map((p) => [
+          p.longitude,
+          p.latitude,
+        ]);
+        pendingTrailRef.current = trailCoords;
+        if (webViewRef.current && mapReadyRef.current) {
+          webViewRef.current.postMessage(
+            JSON.stringify({ type: 'LOAD_LIVE_TRAIL', coordinates: trailCoords })
+          );
+        }
+      }
+    }
+  }, [applyTrackingState]);
+
+  // Initial Location, Permission & Background Resume Sync
   useEffect(() => {
     let sub: Location.LocationSubscription | null = null;
 
@@ -107,12 +157,12 @@ export default function FullSendLiveScreen() {
         if (loc.coords.altitude !== null) {
           setCurrentAltM(Math.round(loc.coords.altitude));
         }
-        sendLocationToMap(loc.coords, false);
+        sendLocationToMap(loc.coords, isRecording);
       } catch (e) {
         console.warn('Initial location error:', e);
       }
 
-      // Watch live location for idle player avatar movement
+      // Watch live location for idle/active avatar movement
       try {
         sub = await Location.watchPositionAsync(
           {
@@ -122,7 +172,7 @@ export default function FullSendLiveScreen() {
           },
           (update) => {
             lastCoordsRef.current = update.coords;
-            if (update.coords.altitude !== null) {
+            if (update.coords.altitude !== null && !isRecording) {
               setCurrentAltM(Math.round(update.coords.altitude));
             }
             if (!isRecording) {
@@ -135,19 +185,17 @@ export default function FullSendLiveScreen() {
       }
     })();
 
-    // Check if a background route was already active
-    checkActiveRouteOnStartup().then((existing) => {
-      if (existing && existing.isTracking) {
-        setIsRecording(true);
-        setDistanceKm(existing.distanceKm);
-        setMaxSpeedKmh(existing.maxSpeedKmh);
-        setElevationGainM(existing.elevationGainM);
-        startTimer(existing.startTime);
+    syncActiveRoute();
+
+    const appStateSub = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        syncActiveRoute();
       }
     });
 
     return () => {
       if (sub) sub.remove();
+      appStateSub.remove();
       if (timerRef.current) clearInterval(timerRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -163,24 +211,13 @@ export default function FullSendLiveScreen() {
       return;
     }
 
-    const themeToUse = /ski|esqu[ií]|snow|muntanya/i.test(selectedVehicle.name)
-      ? 'snow_mountain'
-      : 'dark_road';
+    const themeToUse = mapTheme === 'night' ? 'dark_road' : 'snow_mountain';
 
     const res = await startGpsTracking(
-      (state: RouteTrackingState) => {
-        setDistanceKm(state.distanceKm);
-        setSpeedKmh(state.currentSpeedKmh);
-        setMaxSpeedKmh(state.maxSpeedKmh);
-        setCurrentAltM(state.currentAltitudeM);
-        setElevationGainM(state.elevationGainM);
-
-        Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High }).then((loc) => {
-          sendLocationToMap(loc.coords, true, selectedVehicle.icon);
-        }).catch(() => {});
-      },
+      applyTrackingState,
       themeToUse,
-      true
+      true,
+      selectedVehicle.id
     );
 
     if (!res.success) {
@@ -193,6 +230,7 @@ export default function FullSendLiveScreen() {
     }
 
     const now = Date.now();
+    pendingTrailRef.current = null;
     setIsRecording(true);
     setDistanceKm(0);
     setSpeedKmh(0);
@@ -220,12 +258,17 @@ export default function FullSendLiveScreen() {
 
         setIsRecording(false);
         setSpeedKmh(0);
+        pendingTrailRef.current = null;
 
-        if (selectedVehicle) {
+        const targetVehicleId = routeResult.vehicleId || selectedVehicle?.id;
+        const targetVehicle =
+          vehicles.find((v) => v.id === targetVehicleId) || selectedVehicle;
+
+        if (targetVehicleId && targetVehicle) {
           await addEntry(
-            selectedVehicle.id,
+            targetVehicleId,
             routeResult.distance_km,
-            `Sessió Full Send amb ${selectedVehicle.name}`,
+            `Sessió Full Send amb ${targetVehicle.name}`,
             routeResult
           );
         }
@@ -245,14 +288,7 @@ export default function FullSendLiveScreen() {
   };
 
   const cycleTheme = () => {
-    const next =
-      mapTheme === 'dark_road'
-        ? 'snow_mountain'
-        : mapTheme === 'snow_mountain'
-        ? 'satellite'
-        : mapTheme === 'satellite'
-        ? 'streets'
-        : 'dark_road';
+    const next: 'day' | 'night' = mapTheme === 'day' ? 'night' : 'day';
     setMapTheme(next);
     webViewRef.current?.postMessage(
       JSON.stringify({ type: 'SET_THEME', themeKey: next })
@@ -281,6 +317,14 @@ export default function FullSendLiveScreen() {
       const data = JSON.parse(event.nativeEvent.data);
       if (data.type === 'MAP_LOADED') {
         mapReadyRef.current = true;
+        webViewRef.current?.postMessage(
+          JSON.stringify({ type: 'SET_THEME', themeKey: mapTheme })
+        );
+        if (pendingTrailRef.current && pendingTrailRef.current.length > 0) {
+          webViewRef.current?.postMessage(
+            JSON.stringify({ type: 'LOAD_LIVE_TRAIL', coordinates: pendingTrailRef.current })
+          );
+        }
         if (lastCoordsRef.current) {
           sendLocationToMap(lastCoordsRef.current, isRecording);
         }
@@ -307,8 +351,8 @@ export default function FullSendLiveScreen() {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" />
-  <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js" onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/maplibre-gl@3.6.2/dist/maplibre-gl.js';"></script>
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.3.0/dist/maplibre-gl.css" />
+  <script src="https://unpkg.com/maplibre-gl@5.3.0/dist/maplibre-gl.js" onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/maplibre-gl@5.3.0/dist/maplibre-gl.js';"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body {
@@ -383,7 +427,7 @@ export default function FullSendLiveScreen() {
     var liveTrailCoords = [];
     var is3D = true;
     var followMode = true;
-    var currentTheme = 'pokemon_go';
+    var currentTheme = 'day';
     var pendingLocation = null;
 
     function initMap() {
@@ -427,10 +471,29 @@ export default function FullSendLiveScreen() {
               type: 'hillshade',
               source: 'terrainSource',
               paint: {
-                'hillshade-shadow-color': currentTheme === 'dark_road' ? '#0F172A' : '#3B7A49',
+                'hillshade-shadow-color': currentTheme === 'night' ? '#0F172A' : '#3B7A49',
                 'hillshade-highlight-color': '#FFFFFF',
                 'hillshade-accent-color': '#5CA96A',
                 'hillshade-exaggeration': 0.85
+              }
+            }, 'water');
+
+            // Paint mountains above 1500m in light grey / snow white
+            map.addLayer({
+              id: 'snow-peaks',
+              type: 'color-relief',
+              source: 'terrainSource',
+              paint: {
+                'color-relief-color': [
+                  'interpolate',
+                  ['linear'],
+                  ['elevation'],
+                  0, 'rgba(0, 0, 0, 0)',
+                  1480, 'rgba(226, 232, 240, 0)',
+                  1550, 'rgba(203, 213, 225, 0.6)',
+                  1950, 'rgba(241, 245, 249, 0.86)',
+                  2450, 'rgba(255, 255, 255, 0.96)'
+                ]
               }
             }, 'water');
           } catch(e) {}
@@ -494,21 +557,20 @@ export default function FullSendLiveScreen() {
       }
     }
 
-    // Transform OpenFreeMap to Pokémon GO Minimalist Aesthetic
+    // Transform OpenFreeMap to Pokémon GO Minimalist Aesthetic (Day / Night)
     function applyPokemonGoTheme() {
       if (!map) return;
       try {
-        var isSnow = currentTheme === 'snow_mountain';
-        var isDark = currentTheme === 'dark_road';
+        var isDark = currentTheme === 'night' || currentTheme === 'dark_road';
 
-        var bgColor = isSnow ? '#EEF4F8' : isDark ? '#0F172A' : '#8DD484';
-        var resColor = isSnow ? '#E2ECF2' : isDark ? '#162235' : '#96DC8E';
-        var parkColor = isSnow ? '#D8E5ED' : isDark ? '#1E293B' : '#7EC874';
-        var forestColor = isSnow ? '#CBDCE7' : isDark ? '#162030' : '#5EAF55';
-        var waterColor = isSnow ? '#38BDF8' : isDark ? '#0284C7' : '#48CAE4';
-        var roadMajor = isSnow ? '#FFFFFF' : isDark ? '#334155' : '#FFFFFF';
-        var roadMinor = isSnow ? '#FFFFFF' : isDark ? '#1E293B' : '#FFFFFF';
-        var roadCasing = isSnow ? '#CBD5E1' : isDark ? '#090D16' : '#B4CBB4';
+        var bgColor = isDark ? '#0F172A' : '#8DD484';
+        var resColor = isDark ? '#162235' : '#96DC8E';
+        var parkColor = isDark ? '#1E293B' : '#7EC874';
+        var forestColor = isDark ? '#162030' : '#5EAF55';
+        var waterColor = isDark ? '#0284C7' : '#48CAE4';
+        var roadMajor = isDark ? '#334155' : '#FFFFFF';
+        var roadMinor = isDark ? '#1E293B' : '#FFFFFF';
+        var roadCasing = isDark ? '#090D16' : '#B4CBB4';
 
         // Hide buildings (2D & 3D extrusions)
         if (map.getLayer('building')) map.setLayoutProperty('building', 'visibility', 'none');
@@ -520,7 +582,7 @@ export default function FullSendLiveScreen() {
           if (map.getLayer(l)) map.setLayoutProperty(l, 'visibility', 'none');
         });
 
-        // Set natural soft green terrain colors
+        // Set natural terrain colors
         if (map.getLayer('background')) map.setPaintProperty('background', 'background-color', bgColor);
         if (map.getLayer('landcover_grass')) map.setPaintProperty('landcover_grass', 'fill-color', parkColor);
         if (map.getLayer('landcover_wood')) map.setPaintProperty('landcover_wood', 'fill-color', forestColor);
@@ -532,7 +594,7 @@ export default function FullSendLiveScreen() {
         if (map.getLayer('waterway_river')) map.setPaintProperty('waterway_river', 'line-color', waterColor);
         if (map.getLayer('waterway_other')) map.setPaintProperty('waterway_other', 'line-color', waterColor);
 
-        // Set clean white / light grey road colors and subtle casings (Pokémon GO style)
+        // Set clean road colors and subtle casings
         var majorRoads = ['road_motorway', 'road_trunk_primary', 'bridge_motorway', 'bridge_trunk_primary', 'tunnel_motorway', 'tunnel_trunk_primary'];
         majorRoads.forEach(function(r) {
           if (map.getLayer(r)) map.setPaintProperty(r, 'line-color', roadMajor);
@@ -550,16 +612,16 @@ export default function FullSendLiveScreen() {
 
         // Hillshade color update
         if (map.getLayer('terrain-shading')) {
-          map.setPaintProperty('terrain-shading', 'hillshade-shadow-color', isDark ? '#0F172A' : '#3B7A49');
+          map.setPaintProperty('terrain-shading', 'hillshade-shadow-color', isDark ? '#020617' : '#3B7A49');
         }
 
         // Sky atmosphere
         if (map.setSky) {
           map.setSky({
-            'sky-color': isSnow ? '#B8D8F0' : isDark ? '#090D16' : '#7EC8E3',
+            'sky-color': isDark ? '#090D16' : '#7EC8E3',
             'sky-horizon-blend': 0.6,
-            'horizon-color': '#EBF7F5',
-            'fog-color': isSnow ? '#DCECF7' : isDark ? '#0F172A' : '#D0EAE4'
+            'horizon-color': isDark ? '#1E293B' : '#EBF7F5',
+            'fog-color': isDark ? '#0F172A' : '#D0EAE4'
           });
         }
       } catch(e) {}
@@ -679,6 +741,20 @@ export default function FullSendLiveScreen() {
         var data = typeof raw === 'string' ? JSON.parse(raw) : raw;
         if (data.type === 'LOCATION_UPDATE') {
           updatePlayer(data);
+        } else if (data.type === 'LOAD_LIVE_TRAIL' && Array.isArray(data.coordinates)) {
+          liveTrailCoords = data.coordinates;
+          if (map) {
+            var trailSrc = map.getSource('live-trail-source');
+            if (trailSrc) {
+              trailSrc.setData({
+                type: 'Feature',
+                geometry: {
+                  type: 'LineString',
+                  coordinates: liveTrailCoords
+                }
+              });
+            }
+          }
         } else if (data.type === 'SET_THEME') {
           applyTheme(data.themeKey);
         } else if (data.type === 'SET_3D') {
@@ -733,7 +809,9 @@ export default function FullSendLiveScreen() {
       <View style={styles.topHud}>
         {/* Active Machine Pill */}
         <TouchableOpacity
-          style={styles.vehiclePill}
+          style={[styles.vehiclePill, isRecording && styles.vehiclePillLocked]}
+          disabled={isRecording}
+          activeOpacity={isRecording ? 1 : 0.7}
           onPress={() => setVehicleModalVisible(true)}
         >
           <Text style={styles.vehicleIcon}>{selectedVehicle?.icon || '🏎️'}</Text>
@@ -745,24 +823,20 @@ export default function FullSendLiveScreen() {
               {isRecording ? 'EN GRAVACIÓ 🔴' : 'Toca per canviar'}
             </Text>
           </View>
-          <Ionicons name="chevron-down" size={16} color={Colors.textSecondary} />
+          {isRecording ? (
+            <Ionicons name="lock-closed" size={14} color={Colors.primary} />
+          ) : (
+            <Ionicons name="chevron-down" size={16} color={Colors.textSecondary} />
+          )}
         </TouchableOpacity>
 
         {/* Action Controls */}
         <View style={styles.topActionsRow}>
           <TouchableOpacity style={styles.hudCircleBtn} onPress={cycleTheme}>
             <Ionicons
-              name={
-                mapTheme === 'snow_mountain'
-                  ? 'snow'
-                  : mapTheme === 'satellite'
-                  ? 'globe'
-                  : mapTheme === 'streets'
-                  ? 'map'
-                  : 'moon'
-              }
+              name={mapTheme === 'night' ? 'moon' : 'sunny'}
               size={18}
-              color="#FFFFFF"
+              color={mapTheme === 'night' ? '#E2E8F0' : '#FACC15'}
             />
           </TouchableOpacity>
 
@@ -937,6 +1011,10 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     elevation: 6,
     maxWidth: '58%',
+  },
+  vehiclePillLocked: {
+    borderColor: 'rgba(204, 255, 0, 0.45)',
+    opacity: 0.95,
   },
   vehicleIcon: {
     fontSize: 22,
